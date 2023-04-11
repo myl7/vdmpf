@@ -12,3 +12,4 @@ keywords = ["dmpf", "dpf", "fss", "cryptographic"]
 categories = ["cryptography"]
 
 [dependencies]
+bitvec = "1.0.1"
