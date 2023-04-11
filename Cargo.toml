@@ -8,7 +8,7 @@ documentation = "https://github.com/myl7/vdmpf#readme"
 homepage = "https://github.com/myl7/vdmpf"
 repository = "https://github.com/myl7/vdmpf.git"
 license = "Apache-2.0"
-keywords = ["dmpf", "dpf", "fss", "cryptographic"]
+keywords = ["dmpf", "dpf", "fss", "cryptography"]
 categories = ["cryptography"]
 
 [dependencies]
