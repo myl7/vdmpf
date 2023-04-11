@@ -1,5 +1,7 @@
 # vdmpf
 
+Progress: DPF utility OK
+
 Verifiable distributed multi-point function (DMPF) implementation
 
 Based on the paper, [Lightweight, Maliciously Secure Verifiable Function Secret Sharing](https://link.springer.com/chapter/10.1007/978-3-031-06944-4_6) ([alt](https://eprint.iacr.org/2021/580)), Eurocrypt 2022
