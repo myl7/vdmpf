@@ -53,10 +53,10 @@ impl VDPF {
 
         let mut nodes = [vec![(s0s[0].clone(), false)], vec![(s0s[1].clone(), true)]];
         let mut cws = vec![];
-        let n = f.a.view_bits::<Lsb0>().len();
+        let n = f.a.view_bits::<Msb0>().len();
         for i in 0..n {
             let (cw, [node0, node1]) =
-                self.cw_gen(&[&nodes[0][i], &nodes[1][i]], f.a.view_bits::<Lsb0>()[i]);
+                self.cw_gen(&[&nodes[0][i], &nodes[1][i]], f.a.view_bits::<Msb0>()[i]);
             nodes[0].push(node0);
             nodes[1].push(node1);
             cws.push(cw);
@@ -77,7 +77,7 @@ impl VDPF {
         }
         // Since we use xor as plus, -a == a in the group
         let ocw: Vec<u8> =
-            (BGroup::from(f.b) + nodes[0][n + 1].0.as_ref() + nodes[0][n + 1].0.as_ref()).into();
+            (BGroup::from(f.b) + nodes[0][n + 1].0.as_ref() + nodes[1][n + 1].0.as_ref()).into();
         Ok(Share {
             s0s: s0s.to_vec(),
             cws,
@@ -120,7 +120,7 @@ impl VDPF {
     }
 
     /// `Verify` in the paper.
-    pub fn verify(pis: [Vec<u8>; 2]) -> bool {
+    pub fn verify(&self, pis: &[&[u8]; 2]) -> bool {
         pis[0] == pis[1]
     }
 }
@@ -195,7 +195,7 @@ impl dyn Gen {
         // Other than (s, t, s, t) in the paper, here we take (s, s, t, t) for convenience
         let mut buf = self.gen(input, lambda * 2 + 1);
         let t_buf = buf.split_off(2 * lambda);
-        let ts = [t_buf.view_bits::<Lsb0>()[0], t_buf.view_bits::<Lsb0>()[1]];
+        let ts = [t_buf.view_bits::<Msb0>()[0], t_buf.view_bits::<Msb0>()[1]];
         let mut s_buf = buf.split_off(lambda);
         let sr = buf;
         s_buf.split_off(lambda).truncate(0);
@@ -205,6 +205,7 @@ impl dyn Gen {
 }
 
 /// Point function, $f_{\alpha, \beta}$ in the paper
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointFn {
     /// $\alpha$ in the paper
     pub a: Vec<u8>,
@@ -214,6 +215,7 @@ pub struct PointFn {
 
 /// `k` in the paper.
 /// Since $k_0$, $k_1$ share all other fields except `s0s`, when generating, `s0s` contains all 2 start seeds, and when evaluating, `s0s` contains only 1.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Share {
     pub s0s: Vec<Vec<u8>>,
     pub cws: Vec<CW>,
@@ -222,8 +224,101 @@ pub struct Share {
 }
 
 /// Correction word, `cw` in the paper
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CW {
     pub s: Vec<u8>,
     pub ts: [bool; 2],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use hex_literal::hex;
+    use rand::prelude::*;
+    use rand_chacha::ChaChaRng;
+    use rand_seeder::Seeder;
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    use sha3::Shake256;
+
+    #[derive(Default)]
+    struct Hash {}
+
+    impl Gen for Hash {
+        fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
+            let mut hasher = Shake256::default();
+            hasher.update(input);
+            let mut reader = hasher.finalize_xof();
+            let mut output = vec![0u8; output_len];
+            reader.read(&mut output);
+            output
+        }
+    }
+
+    #[derive(Default)]
+    struct PRG {}
+
+    impl Gen for PRG {
+        fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
+            let mut rng: ChaChaRng = Seeder::from(input).make_rng();
+            let mut output = vec![0u8; output_len];
+            rng.fill_bytes(&mut output);
+            output
+        }
+    }
+
+    #[test]
+    fn test_gen_eval_verify_ok() {
+        let f = PointFn {
+            a: hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),
+            b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
+        };
+        let vdpf = VDPF::new(
+            16,
+            Box::new(PRG::default()),
+            Box::new(Hash::default()),
+            Box::new(Hash::default()),
+        );
+        let seed = 7;
+        let mut rng = ChaChaRng::seed_from_u64(seed);
+        let mut s0s = [vec![0u8; 16], vec![0u8; 16]];
+        let mut i = 0;
+        let mut gen_res = Err(());
+        while i < 1000 {
+            rng.fill_bytes(&mut s0s[0]);
+            rng.fill_bytes(&mut s0s[1]);
+            gen_res = vdpf.gen(s0s.clone(), f.clone());
+            if gen_res.is_ok() {
+                break;
+            }
+            i += 1;
+        }
+        if i >= 1000 {
+            assert!(false, "VDPF gen failed")
+        }
+        let mut share = gen_res.unwrap();
+
+        let s00 = share.s0s[0].clone();
+        let s01 = share.s0s[1].clone();
+        let xs = &[
+            // TODO
+            // hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").as_ref(),
+            hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").as_ref(),
+            // hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
+        ];
+        // TODO
+        share.s0s = vec![s01];
+        let (y1s, pi1) = vdpf.eval(true, &share, xs);
+        share.s0s = vec![s00];
+        let (y0s, pi0) = vdpf.eval(false, &share, xs);
+        assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
+        for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
+            let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
+            if x == &f.a {
+                assert_eq!(y, f.b);
+            } else {
+                assert_eq!(y, hex!("00000000000000000000000000000000"));
+            }
+        }
+    }
 }
