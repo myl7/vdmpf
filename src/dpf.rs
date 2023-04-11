@@ -4,7 +4,8 @@
 //! Distributed point function (DPF) implementation
 
 // `s` & `t` as single letter var follow the definition in the paper.
-// Left = 0, Right = 1.
+// Left (L) = 0, right (R) = 1.
+// For bits, true = 1, false = 0.
 // When both L / R and 0 / 1 exist, put 0 / 1 first in indexing.
 
 use std::ops::Add;
@@ -74,6 +75,7 @@ impl VDPF {
         if nodes[0][n + 1].1 == nodes[1][n + 1].1 {
             return Err(());
         }
+        // Since we use xor as plus, -a == a in the group
         let ocw: Vec<u8> =
             (BGroup::from(f.b) + nodes[0][n + 1].0.as_ref() + nodes[0][n + 1].0.as_ref()).into();
         Ok(Share {
@@ -82,6 +84,44 @@ impl VDPF {
             cs,
             ocw,
         })
+    }
+
+    /// `BVEval` in the paper.
+    /// `b` is the party num, which is 0 / 1.
+    pub fn eval(&self, b: bool, share: &Share, xs: &[&[u8]]) -> (Vec<Vec<u8>>, Vec<u8>) {
+        assert_eq!(share.s0s.len(), 1);
+
+        let mut ys: Vec<Vec<u8>> = vec![];
+        let mut pi = BGroup::from(share.cs.clone());
+        for x in xs {
+            let mut node = (share.s0s[0].clone(), b);
+            for i in 0..x.view_bits::<Msb0>().len() {
+                let [node0, node1] = self.node_expand(&node, share.cws[i].clone());
+                if x.view_bits::<Msb0>()[i] {
+                    node = node1;
+                } else {
+                    node = node0;
+                }
+            }
+            let pi_tmp = self
+                .hash
+                .gen(&[x.to_vec(), node.0.clone()].concat(), self.lambda * 4);
+            node.1 = node.0.view_bits::<Lsb0>()[0];
+            // Since we use xor as plus, -a == a in the group
+            ys.push(correct(BGroup::from(node.0), share.ocw.as_ref(), node.1).into());
+            let hash_prime_buf: Vec<u8> =
+                (pi.clone() + correct(BGroup::from(pi_tmp), share.cs.as_ref(), node.1)).into();
+            pi += self
+                .hash_prime
+                .gen(&hash_prime_buf, self.lambda * 2)
+                .as_ref();
+        }
+        (ys, pi.into())
+    }
+
+    /// `Verify` in the paper.
+    pub fn verify(pis: [Vec<u8>; 2]) -> bool {
+        pis[0] == pis[1]
     }
 }
 

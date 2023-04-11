@@ -4,8 +4,10 @@
 use std::ops::{Add, AddAssign};
 
 /// Bytes with xor operations as a mathmatical group
+#[derive(Clone)]
 pub struct BGroup(BGroupInner);
 
+#[derive(Clone)]
 enum BGroupInner {
     Bytes(Vec<u8>),
     Bit(bool),
