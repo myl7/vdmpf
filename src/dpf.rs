@@ -16,6 +16,8 @@ use crate::group::BGroup;
 
 /// `VerDPF` in the paper
 pub struct VDPF {
+    /// $\lambda$ in the paper.
+    /// The byte len of point function a and b, and sampled seeds should be equal to it.
     lambda: usize,
     /// PRG (pseudo-random generator), $\mathcal{G}$: $\{0, 1\}^{\lambda} \rightarrow \{0, 1\}^{2\lambda + 2}$ in the paper
     prg: Box<dyn Gen>,
@@ -185,6 +187,7 @@ where
 }
 
 /// Interface for PRG and Hash functions.
+/// For PRG, `input` is the seed.
 /// See [`VDPF`].
 pub trait Gen {
     fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8>;
