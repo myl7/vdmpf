@@ -68,7 +68,8 @@ impl VDMPF {
     /// PGP seed `seed` should be randomly sampled.
     pub fn gen(&self, fs: &[&PointFn]) -> Result<MShare, ()> {
         let mut seed;
-        let mut prp_retry = self.prp_retry + 1;
+        // + 2 to use 0 as the boundary
+        let mut prp_retry = self.prp_retry + 2;
         let (table, indexes) = loop {
             prp_retry -= 1;
             if prp_retry == 0 {
@@ -155,8 +156,8 @@ impl VDMPF {
     ) -> Result<Vec<Option<(usize, usize)>>, ()> {
         // `Table` in the paper
         let mut table = vec![None; m];
-        // + 1 to use 0 as the boundary
-        let mut retry = self.ch_retry + a_s.len() + 1;
+        // + 2 to use 0 as the boundary
+        let mut retry = self.ch_retry + a_s.len() + 2;
         for ai in 0..a_s.len() {
             let mut pending = Some((ai, 0));
             while let Some((pi, _)) = pending {
@@ -198,7 +199,7 @@ pub trait ISampler {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_fixture {
     use super::*;
 
     use aes::cipher::generic_array::GenericArray;
@@ -231,4 +232,16 @@ mod tests {
             rng.gen_range(0..n - 1)
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    // use super::tests_fixture::*;
+    // use super::*;
+    // use crate::dpf::tests_fixture::*;
+
+    // #[test]
+    // fn test_gen_eval_verify_ok() {
+    //     todo!("Impl")
+    // }
 }

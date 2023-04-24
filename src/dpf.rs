@@ -247,10 +247,9 @@ pub struct CW {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests_fixture {
     use super::*;
 
-    use hex_literal::hex;
     use rand::prelude::*;
     use rand_chacha::ChaChaRng;
     use rand_seeder::Seeder;
@@ -258,7 +257,7 @@ mod tests {
     use sha3::Shake256;
 
     #[derive(Default)]
-    struct Hash {}
+    pub struct Hash {}
 
     impl Gen for Hash {
         fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
@@ -272,7 +271,7 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct PRG {}
+    pub struct PRG {}
 
     impl Gen for PRG {
         fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
@@ -283,7 +282,7 @@ mod tests {
         }
     }
 
-    struct Sampler {
+    pub struct Sampler {
         pub seed: u64,
     }
 
@@ -295,6 +294,14 @@ mod tests {
             buf
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tests_fixture::*;
+    use super::*;
+
+    use hex_literal::hex;
 
     #[test]
     fn test_gen_eval_verify_ok() {
