@@ -25,6 +25,10 @@ pub struct VDPF {
     hash: Box<dyn Gen>,
     /// Hash function that is collision-resistant, $H'$: $\{0, 1\}^{4\lambda} \rightarrow \{0, 1\}^{2\lambda}$ in the paper
     hash_prime: Box<dyn Gen>,
+    /// To sample starting seeds
+    sampler: Box<dyn BSampler>,
+    /// Retry limit for starting seed resampling
+    gen_retry: usize,
 }
 
 impl VDPF {
@@ -33,12 +37,16 @@ impl VDPF {
         prg: Box<dyn Gen>,
         hash: Box<dyn Gen>,
         hash_prime: Box<dyn Gen>,
+        sampler: Box<dyn BSampler>,
+        gen_retry: usize,
     ) -> Self {
         Self {
             lambda,
             prg,
             hash,
             hash_prime,
+            sampler,
+            gen_retry,
         }
     }
 }
@@ -48,44 +56,44 @@ impl VDPF {
     /// `Gen` in the paper.
     /// Starting seeds `s0s` should be randomly sampled, but not required to be different.
     /// They should be both $\lambda$ bytes, which is the `lambda` field in the struct, otherwise panic.
-    pub fn gen(&self, s0s: [Vec<u8>; 2], f: PointFn) -> Result<Share, ()> {
-        for s0 in s0s.iter() {
-            assert_eq!(s0.len(), self.lambda);
-        }
+    pub fn gen(&self, f: PointFn) -> Result<Share, ()> {
+        for _ in 0..self.gen_retry {
+            let mut s0_buf = self.sampler.sample(self.lambda * 2);
+            let s01 = s0_buf.split_off(self.lambda);
+            let s00 = s0_buf.split_off(self.lambda);
+            let s0s = vec![s00.clone(), s01.clone()];
 
-        let mut nodes = [vec![(s0s[0].clone(), false)], vec![(s0s[1].clone(), true)]];
-        let mut cws = vec![];
-        let n = f.a.view_bits::<Msb0>().len();
-        for i in 0..n {
-            let (cw, [node0, node1]) =
-                self.cw_gen(&[&nodes[0][i], &nodes[1][i]], f.a.view_bits::<Msb0>()[i]);
-            nodes[0].push(node0);
-            nodes[1].push(node1);
-            cws.push(cw);
+            let mut nodes = [vec![(s00, false)], vec![(s01, true)]];
+            let mut cws = vec![];
+            let n = f.a.view_bits::<Msb0>().len();
+            for i in 0..n {
+                let (cw, [node0, node1]) =
+                    self.cw_gen(&[&nodes[0][i], &nodes[1][i]], f.a.view_bits::<Msb0>()[i]);
+                nodes[0].push(node0);
+                nodes[1].push(node1);
+                cws.push(cw);
+            }
+            let pi0 = self.hash.gen(
+                &[f.a.clone(), nodes[0][n].0.clone()].concat(),
+                self.lambda * 4,
+            );
+            let pi1 = self.hash.gen(
+                &[f.a.clone(), nodes[1][n].0.clone()].concat(),
+                self.lambda * 4,
+            );
+            let cs: Vec<u8> = (BGroup::from(pi0) + pi1.as_ref()).into();
+            nodes[0].push((nodes[0][n].0.clone(), nodes[0][n].0.view_bits::<Lsb0>()[0]));
+            nodes[1].push((nodes[1][n].0.clone(), nodes[1][n].0.view_bits::<Lsb0>()[0]));
+            if nodes[0][n + 1].1 == nodes[1][n + 1].1 {
+                continue;
+            }
+            // Since we use xor as plus, -a == a in the group
+            let ocw: Vec<u8> =
+                (BGroup::from(f.b) + nodes[0][n + 1].0.as_ref() + nodes[1][n + 1].0.as_ref())
+                    .into();
+            return Ok(Share { s0s, cws, cs, ocw });
         }
-        let pi0 = self.hash.gen(
-            &[f.a.clone(), nodes[0][n].0.clone()].concat(),
-            self.lambda * 4,
-        );
-        let pi1 = self.hash.gen(
-            &[f.a.clone(), nodes[1][n].0.clone()].concat(),
-            self.lambda * 4,
-        );
-        let cs: Vec<u8> = (BGroup::from(pi0) + pi1.as_ref()).into();
-        nodes[0].push((nodes[0][n].0.clone(), nodes[0][n].0.view_bits::<Lsb0>()[0]));
-        nodes[1].push((nodes[1][n].0.clone(), nodes[1][n].0.view_bits::<Lsb0>()[0]));
-        if nodes[0][n + 1].1 == nodes[1][n + 1].1 {
-            return Err(());
-        }
-        // Since we use xor as plus, -a == a in the group
-        let ocw: Vec<u8> =
-            (BGroup::from(f.b) + nodes[0][n + 1].0.as_ref() + nodes[1][n + 1].0.as_ref()).into();
-        Ok(Share {
-            s0s: s0s.to_vec(),
-            cws,
-            cs,
-            ocw,
-        })
+        Err(())
     }
 
     /// `BVEval` in the paper.
@@ -207,6 +215,11 @@ impl dyn Gen {
     }
 }
 
+/// Sample random bytes.
+pub trait BSampler {
+    fn sample(&self, len: usize) -> Vec<u8>;
+}
+
 /// Point function, $f_{\alpha, \beta}$ in the paper
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointFn {
@@ -270,35 +283,36 @@ mod tests {
         }
     }
 
+    struct Sampler {
+        pub seed: u64,
+    }
+
+    impl BSampler for Sampler {
+        fn sample(&self, len: usize) -> Vec<u8> {
+            let mut rng = ChaChaRng::seed_from_u64(self.seed);
+            let mut buf = vec![0u8; len];
+            rng.fill_bytes(&mut buf);
+            buf
+        }
+    }
+
     #[test]
     fn test_gen_eval_verify_ok() {
         let f = PointFn {
             a: hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),
             b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
         };
+        let seed = 7;
         let vdpf = VDPF::new(
             16,
             Box::new(PRG::default()),
             Box::new(Hash::default()),
             Box::new(Hash::default()),
+            Box::new(Sampler { seed }),
+            1000,
         );
-        let seed = 7;
-        let mut rng = ChaChaRng::seed_from_u64(seed);
-        let mut s0s = [vec![0u8; 16], vec![0u8; 16]];
-        let mut i = 0;
-        let mut gen_res = Err(());
-        while i < 1000 {
-            rng.fill_bytes(&mut s0s[0]);
-            rng.fill_bytes(&mut s0s[1]);
-            gen_res = vdpf.gen(s0s.clone(), f.clone());
-            if gen_res.is_ok() {
-                break;
-            }
-            i += 1;
-        }
-        if i >= 1000 {
-            assert!(false, "VDPF gen failed")
-        }
+        let gen_res = vdpf.gen(f.clone());
+        assert!(gen_res.is_ok(), "VDPF gen failed");
         let mut share = gen_res.unwrap();
 
         let s00 = share.s0s[0].clone();
