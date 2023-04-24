@@ -9,7 +9,7 @@ use num_bigint::{BigUint, ToBigUint};
 use num_integer::Integer;
 use statrs::distribution::{ContinuousCDF, Normal};
 
-use crate::dpf::{Gen, PointFn, Share, VDPF};
+use crate::dpf::{BSampler, Gen, PointFn, Share, VDPF};
 
 /// `VerDMPF` in the paper.
 /// $\mathcal(k)$ is fixed to 3 since it affects the form of `ch_compact`.
@@ -23,7 +23,11 @@ pub struct VDMPF {
     prp: Box<dyn Permu>,
     /// Used to sample hash function indexes in Cuckoo-hashing.
     /// Since $\mathcal{k}$ is fixed to 3, the sampling range is always `[0, 2]`.
-    ch_sample: Box<dyn ISample>,
+    ch_sampler: Box<dyn ISampler>,
+    /// To sample the PRP seed
+    prp_sampler: Box<dyn BSampler>,
+    /// Retry limit for PRP seed resampling
+    prp_retry: usize,
     lambda: usize,
     vdpf: VDPF,
 }
@@ -33,19 +37,25 @@ impl VDMPF {
         lambda_p: f64,
         ch_retry: usize,
         prp: Box<dyn Permu>,
-        ch_sample: Box<dyn ISample>,
+        ch_sampler: Box<dyn ISampler>,
+        prp_sampler: Box<dyn BSampler>,
+        prp_retry: usize,
         lambda: usize,
         prg: Box<dyn Gen>,
         hash: Box<dyn Gen>,
         hash_prime: Box<dyn Gen>,
+        dpf_sampler: Box<dyn BSampler>,
+        gen_retry: usize,
     ) -> Self {
         Self {
             lambda_p,
             ch_retry,
             prp,
-            ch_sample,
+            ch_sampler,
+            prp_sampler,
+            prp_retry,
             lambda,
-            vdpf: VDPF::new(lambda, prg, hash, hash_prime),
+            vdpf: VDPF::new(lambda, prg, hash, hash_prime, dpf_sampler, gen_retry),
         }
     }
 }
@@ -56,43 +66,57 @@ impl VDMPF {
 
     /// `Gen` in the paper.
     /// PGP seed `seed` should be randomly sampled.
-    pub fn gen(&self, seed: &[u8], dpf_s0s: &[&[&[u8]; 2]], fs: &[&PointFn]) -> Result<MShare, ()> {
-        // Use `usize` other than `f64` because all of them will be used as (part of) indexes.
-        let t = fs.len();
-        let m = self.ch_bucket(t);
-        let n = 2.to_biguint().unwrap().pow(self.lambda as u32);
-        let b = (n.clone() * VDMPF::K.to_biguint().unwrap()).div_ceil(&m.to_biguint().unwrap());
-        let yb_gen = |i: usize, x: &[u8]| {
-            let xb = BigUint::from_bytes_be(x) + 0.to_biguint().unwrap() * i.to_biguint().unwrap();
-            let mut xbb = xb.to_bytes_be();
-            self.prp.permu(seed, &mut xbb);
-            BigUint::from_bytes_be(&xbb)
+    pub fn gen(&self, fs: &[&PointFn]) -> Result<MShare, ()> {
+        let mut seed;
+        let mut prp_retry = self.prp_retry + 1;
+        let (table, indexes) = loop {
+            prp_retry -= 1;
+            if prp_retry == 0 {
+                return Err(());
+            }
+            seed = self.prp_sampler.sample(self.lambda);
+            // Use `usize` other than `f64` because all of them will be used as (part of) indexes.
+            let t = fs.len();
+            let m = self.ch_bucket(t);
+            let n = 2.to_biguint().unwrap().pow(self.lambda as u32);
+            let b = (n.clone() * VDMPF::K.to_biguint().unwrap()).div_ceil(&m.to_biguint().unwrap());
+            let yb_gen = |i: usize, x: &[u8]| {
+                let xb =
+                    BigUint::from_bytes_be(x) + 0.to_biguint().unwrap() * i.to_biguint().unwrap();
+                let mut xbb = xb.to_bytes_be();
+                self.prp.permu(&seed, &mut xbb);
+                BigUint::from_bytes_be(&xbb)
+            };
+            let hs = (0..VDMPF::K)
+                .map(|i| {
+                    let b = b.clone();
+                    move |x: &[u8]| {
+                        let yb = yb_gen(i, x);
+                        (yb / &b).to_u64_digits()[0] as usize
+                    }
+                })
+                .collect::<Vec<_>>();
+            let indexes = (0..VDMPF::K)
+                .map(|i| {
+                    let b = b.clone();
+                    move |x: &[u8]| {
+                        let yb = yb_gen(i, x);
+                        (yb % &b).to_bytes_be()
+                    }
+                })
+                .collect::<Vec<_>>();
+            let a_s = fs.iter().map(|f| f.a.as_ref()).collect::<Vec<_>>();
+            let table = match self.ch_compact(&a_s, &hs, m) {
+                Ok(table) => table,
+                Err(_) => continue,
+            };
+            break (table, indexes);
         };
-        let hs = (0..VDMPF::K)
-            .map(|i| {
-                let b = b.clone();
-                move |x: &[u8]| {
-                    let yb = yb_gen(i, x);
-                    (yb / &b).to_u64_digits()[0] as usize
-                }
-            })
-            .collect::<Vec<_>>();
-        let indexes = (0..VDMPF::K)
-            .map(|i| {
-                let b = b.clone();
-                move |x: &[u8]| {
-                    let yb = yb_gen(i, x);
-                    (yb % &b).to_bytes_be()
-                }
-            })
-            .collect::<Vec<_>>();
-        let a_s = fs.iter().map(|f| f.a.as_ref()).collect::<Vec<_>>();
-        let table = self.ch_compact(&a_s, &hs, m)?;
         let mut mshare = MShare {
             ks: vec![],
-            seed: seed.to_vec(),
+            seed: seed.clone(),
         };
-        for (i, item) in table.into_iter().enumerate() {
+        for item in table.into_iter() {
             let (a, b) = match item {
                 // `aj` is $a_j$ in the paper
                 Some((aji, k)) => {
@@ -103,9 +127,7 @@ impl VDMPF {
                 None => (vec![], vec![]),
             };
             let f = PointFn { a, b };
-            let share = self
-                .vdpf
-                .gen([dpf_s0s[i][0].to_vec(), dpf_s0s[i][1].to_vec()], f)?;
+            let share = self.vdpf.gen(f)?;
             mshare.ks.push(share);
         }
         Ok(mshare)
@@ -142,7 +164,7 @@ impl VDMPF {
                 if retry == 0 {
                     return Err(());
                 }
-                let k = self.ch_sample.sample(VDMPF::K);
+                let k = self.ch_sampler.sample(VDMPF::K);
                 pending.iter_mut().for_each(|(_, pk)| *pk = k);
                 let i = hs[k](a_s[pi]);
                 mem::swap(&mut table[i], &mut pending);
@@ -170,7 +192,7 @@ pub trait Permu {
 
 /// Interface for sampling indexes in Cuckoo-hashing.
 /// See [`VDMPF`].
-pub trait ISample {
+pub trait ISampler {
     /// Sample from `[0, n)`.
     fn sample(&self, n: usize) -> usize;
 }
@@ -201,9 +223,9 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct CHSample {}
+    struct CHSampler {}
 
-    impl ISample for CHSample {
+    impl ISampler for CHSampler {
         fn sample(&self, n: usize) -> usize {
             let mut rng = ChaChaRng::from_rng(thread_rng()).unwrap();
             rng.gen_range(0..n - 1)
