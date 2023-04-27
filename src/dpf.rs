@@ -248,6 +248,8 @@ pub struct CW {
 
 #[cfg(test)]
 pub(crate) mod tests_fixture {
+    use std::cell::RefCell;
+
     use super::*;
 
     use rand::prelude::*;
@@ -283,14 +285,21 @@ pub(crate) mod tests_fixture {
     }
 
     pub struct Sampler {
-        pub seed: u64,
+        pub rng: RefCell<ChaChaRng>,
+    }
+
+    impl Sampler {
+        pub fn new(seed: u64) -> Self {
+            Self {
+                rng: RefCell::new(ChaChaRng::seed_from_u64(seed)),
+            }
+        }
     }
 
     impl BSampler for Sampler {
         fn sample(&self, len: usize) -> Vec<u8> {
-            let mut rng = ChaChaRng::seed_from_u64(self.seed);
             let mut buf = vec![0u8; len];
-            rng.fill_bytes(&mut buf);
+            self.rng.borrow_mut().fill_bytes(&mut buf);
             buf
         }
     }
@@ -315,7 +324,7 @@ mod tests {
             Box::new(PRG::default()),
             Box::new(Hash::default()),
             Box::new(Hash::default()),
-            Box::new(Sampler { seed }),
+            Box::new(Sampler::new(seed)),
             1000,
         );
         let gen_res = vdpf.gen(f.clone());
@@ -356,7 +365,7 @@ mod tests {
             Box::new(PRG::default()),
             Box::new(Hash::default()),
             Box::new(Hash::default()),
-            Box::new(Sampler { seed }),
+            Box::new(Sampler::new(seed)),
             1000,
         );
         let gen_res = vdpf.gen(f.clone());
@@ -383,5 +392,24 @@ mod tests {
                 assert_eq!(y, hex!("00000000000000000000000000000000"));
             }
         }
+    }
+
+    #[test]
+    fn test_gen_zeros() {
+        let f = PointFn {
+            a: hex!("00000000000000000000000000000000").to_vec(),
+            b: hex!("00000000000000000000000000000000").to_vec(),
+        };
+        let seed = 7;
+        let vdpf = VDPF::new(
+            16,
+            Box::new(PRG::default()),
+            Box::new(Hash::default()),
+            Box::new(Hash::default()),
+            Box::new(Sampler::new(seed)),
+            1000,
+        );
+        let gen_res = vdpf.gen(f.clone());
+        assert!(gen_res.is_ok(), "VDPF gen failed");
     }
 }

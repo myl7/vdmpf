@@ -4,6 +4,7 @@
 //! Distributed multi-point function (DMPF) implementation
 
 use std::mem;
+use std::rc::Rc;
 
 use num_bigint::{BigUint, ToBigUint};
 use num_integer::Integer;
@@ -67,42 +68,42 @@ impl VDMPF {
     /// `Gen` in the paper.
     /// PGP seed `seed` should be randomly sampled.
     pub fn gen(&self, fs: &[&PointFn]) -> Result<MShare, ()> {
-        let mut seed;
+        // Ensure $\alpha < 2^126$ so that $n\mathcal{k} < 2^128$ and we can use AES as PRP
+        fs.iter()
+            .for_each(|f| assert!(BigUint::from_bytes_be(&f.a) < 2.to_biguint().unwrap().pow(126)));
+
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
-        let (table, indexes) = loop {
+        let prp_rc = Rc::new(&self.prp);
+        let n = 2.to_biguint().unwrap().pow(126);
+        let (table, seed, n, b, n_prime) = loop {
             prp_retry -= 1;
             if prp_retry == 0 {
                 return Err(());
             }
-            seed = self.prp_sampler.sample(self.lambda);
+            let seed = self.prp_sampler.sample(self.lambda);
             // Use `usize` other than `f64` because all of them will be used as (part of) indexes.
             let t = fs.len();
             let m = self.ch_bucket(t);
-            let n = 2.to_biguint().unwrap().pow(self.lambda as u32);
-            let b = (n.clone() * VDMPF::K.to_biguint().unwrap()).div_ceil(&m.to_biguint().unwrap());
-            let yb_gen = |i: usize, x: &[u8]| {
-                let xb =
-                    BigUint::from_bytes_be(x) + 0.to_biguint().unwrap() * i.to_biguint().unwrap();
-                let mut xbb = xb.to_bytes_be();
-                self.prp.permu(&seed, &mut xbb);
-                BigUint::from_bytes_be(&xbb)
-            };
+            let b = 2
+                .to_biguint()
+                .unwrap()
+                .pow(128)
+                .div_ceil(&m.to_biguint().unwrap());
+            // $n' / 8$ in the paper
+            let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
             let hs = (0..VDMPF::K)
                 .map(|i| {
+                    let n = n.clone();
+                    let prp = prp_rc.clone();
                     let b = b.clone();
+                    let seed = seed.clone();
                     move |x: &[u8]| {
-                        let yb = yb_gen(i, x);
+                        let xb = BigUint::from_bytes_be(x) + &n * i.to_biguint().unwrap();
+                        let mut xbb = xb.to_bytes_be();
+                        prp.permu(&seed, &mut xbb);
+                        let yb = BigUint::from_bytes_be(&xbb);
                         (yb / &b).to_u64_digits()[0] as usize
-                    }
-                })
-                .collect::<Vec<_>>();
-            let indexes = (0..VDMPF::K)
-                .map(|i| {
-                    let b = b.clone();
-                    move |x: &[u8]| {
-                        let yb = yb_gen(i, x);
-                        (yb % &b).to_bytes_be()
                     }
                 })
                 .collect::<Vec<_>>();
@@ -111,7 +112,7 @@ impl VDMPF {
                 Ok(table) => table,
                 Err(_) => continue,
             };
-            break (table, indexes);
+            break (table, seed, n, b, n_prime);
         };
         let mut mshare = MShare {
             ks: vec![],
@@ -121,11 +122,20 @@ impl VDMPF {
             let (a, b) = match item {
                 // `aj` is $a_j$ in the paper
                 Some((aji, k)) => {
-                    let a = indexes[k](fs[aji].a.as_ref());
+                    let xb = BigUint::from_bytes_be(fs[aji].a.as_ref())
+                        + n.clone() * k.to_biguint().unwrap();
+                    let mut xbb = xb.to_bytes_be();
+                    prp_rc.permu(&seed, &mut xbb);
+                    let yb = BigUint::from_bytes_be(&xbb);
+                    let mut index = (yb % &b).to_bytes_be();
+                    for _ in 0..(n_prime - index.len()) {
+                        index.insert(0, 0);
+                    }
+                    let a = index;
                     let b = fs[aji].b.clone();
                     (a, b)
                 }
-                None => (vec![], vec![]),
+                None => (vec![0; n_prime], vec![0; self.lambda]),
             };
             let f = PointFn { a, b };
             let share = self.vdpf.gen(f)?;
@@ -187,7 +197,7 @@ pub struct MShare {
 /// Interface for PRP.
 /// See [`VDMPF`].
 pub trait Permu {
-    // Permutation in-place
+    /// Permutation $[n\mathcal{k} \rightarrow n\mathcal{k}]$ in-place
     fn permu(&self, seed: &[u8], x: &mut [u8]);
 }
 
@@ -200,6 +210,8 @@ pub trait ISampler {
 
 #[cfg(test)]
 pub(crate) mod tests_fixture {
+    use std::cell::RefCell;
+
     use super::*;
 
     use aes::cipher::generic_array::GenericArray;
@@ -210,7 +222,7 @@ pub(crate) mod tests_fixture {
     use rand_seeder::Seeder;
 
     #[derive(Default)]
-    struct PRP {}
+    pub struct PRP {}
 
     impl Permu for PRP {
         fn permu(&self, seed: &[u8], x: &mut [u8]) {
@@ -223,25 +235,86 @@ pub(crate) mod tests_fixture {
         }
     }
 
-    #[derive(Default)]
-    struct CHSampler {}
+    pub struct CHSampler {
+        rng: RefCell<ChaChaRng>,
+    }
+
+    impl CHSampler {
+        pub fn new(seed: u64) -> Self {
+            Self {
+                rng: RefCell::new(ChaChaRng::seed_from_u64(seed)),
+            }
+        }
+    }
 
     impl ISampler for CHSampler {
         fn sample(&self, n: usize) -> usize {
-            let mut rng = ChaChaRng::from_rng(thread_rng()).unwrap();
-            rng.gen_range(0..n - 1)
+            self.rng.borrow_mut().gen_range(0..n - 1)
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    // use super::tests_fixture::*;
-    // use super::*;
-    // use crate::dpf::tests_fixture::*;
+    use super::tests_fixture::*;
+    use super::*;
+    use crate::dpf::tests_fixture::*;
 
-    // #[test]
-    // fn test_gen_eval_verify_ok() {
-    //     todo!("Impl")
-    // }
+    use hex_literal::hex;
+
+    #[test]
+    fn test_gen_eval_verify_ok() {
+        let fs = [
+            PointFn {
+                a: hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),
+                b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
+            },
+            PointFn {
+                a: hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").to_vec(),
+                b: hex!("e5f67890e5f67890e5f67890e5f67891").to_vec(),
+            },
+        ];
+        let ch_seed = 7;
+        let prp_seed = 8;
+        let dpf_seed = 9;
+        let vdmpf = VDMPF::new(
+            80f64,
+            1000,
+            Box::new(PRP::default()),
+            Box::new(CHSampler::new(ch_seed)),
+            Box::new(Sampler::new(prp_seed)),
+            1000,
+            16,
+            Box::new(PRG::default()),
+            Box::new(Hash::default()),
+            Box::new(Hash::default()),
+            Box::new(Sampler::new(dpf_seed)),
+            1000,
+        );
+        let gen_res = vdmpf.gen(&fs.iter().collect::<Vec<_>>());
+        assert!(gen_res.is_ok(), "VDMPF gen failed");
+        let _mshare = gen_res.unwrap();
+        // TODO
+
+        // let s00 = share.s0s[0].clone();
+        // let s01 = share.s0s[1].clone();
+        // let xs = &[
+        //     hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").as_ref(),
+        //     hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").as_ref(),
+        //     hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
+        // ];
+        // share.s0s = vec![s01];
+        // let (y1s, pi1) = vdpf.eval(true, &share, xs);
+        // share.s0s = vec![s00];
+        // let (y0s, pi0) = vdpf.eval(false, &share, xs);
+        // assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
+        // for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
+        //     let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
+        //     if x == &f.a {
+        //         assert_eq!(y, f.b);
+        //     } else {
+        //         assert_eq!(y, hex!("00000000000000000000000000000000"));
+        //     }
+        // }
+    }
 }
