@@ -325,12 +325,51 @@ mod tests {
         let s00 = share.s0s[0].clone();
         let s01 = share.s0s[1].clone();
         let xs = &[
-            // TODO
-            // hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").as_ref(),
+            hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").as_ref(),
             hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").as_ref(),
-            // hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
+            hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
         ];
-        // TODO
+        share.s0s = vec![s01];
+        let (y1s, pi1) = vdpf.eval(true, &share, xs);
+        share.s0s = vec![s00];
+        let (y0s, pi0) = vdpf.eval(false, &share, xs);
+        assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
+        for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
+            let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
+            if x == &f.a {
+                assert_eq!(y, f.b);
+            } else {
+                assert_eq!(y, hex!("00000000000000000000000000000000"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_gen_eval_verify_ok_with_diff_len() {
+        let f = PointFn {
+            a: hex!("a1b2c3d4a1b2c3d4").to_vec(),
+            b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
+        };
+        let seed = 7;
+        let vdpf = VDPF::new(
+            16,
+            Box::new(PRG::default()),
+            Box::new(Hash::default()),
+            Box::new(Hash::default()),
+            Box::new(Sampler { seed }),
+            1000,
+        );
+        let gen_res = vdpf.gen(f.clone());
+        assert!(gen_res.is_ok(), "VDPF gen failed");
+        let mut share = gen_res.unwrap();
+
+        let s00 = share.s0s[0].clone();
+        let s01 = share.s0s[1].clone();
+        let xs = &[
+            hex!("a1b2c3d4a1b2c3d4").as_ref(),
+            hex!("a1b2c3d4a1b2c3d4").as_ref(),
+            hex!("4d3c2b1a4d3c2b1a").as_ref(),
+        ];
         share.s0s = vec![s01];
         let (y1s, pi1) = vdpf.eval(true, &share, xs);
         share.s0s = vec![s00];
