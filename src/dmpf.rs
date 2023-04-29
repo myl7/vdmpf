@@ -305,63 +305,13 @@ pub trait ISampler {
     fn sample(&self, n: usize) -> usize;
 }
 
-#[cfg(test)]
-pub(crate) mod tests_fixture {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    use aes::cipher::generic_array::GenericArray;
-    use aes::cipher::{BlockEncrypt, KeyInit};
-    use aes::Aes256;
-    use rand::prelude::*;
-    use rand_chacha::ChaChaRng;
-    use rand_seeder::Seeder;
-
-    #[derive(Default)]
-    pub struct PRP {}
-
-    impl Permu for PRP {
-        fn domains(&self) -> (u32, u32) {
-            (126, 128)
-        }
-
-        fn permu(&self, seed: &[u8], x: &mut [u8]) {
-            assert_eq!(x.len(), 16);
-            let mut rng: ChaChaRng = Seeder::from(seed).make_rng();
-            let key = GenericArray::from(rng.gen::<[u8; 32]>());
-            let mut block = GenericArray::from_mut_slice(&mut x[0..16]);
-            let cipher = Aes256::new(&key);
-            cipher.encrypt_block(&mut block);
-        }
-    }
-
-    pub struct CHSampler {
-        rng: RefCell<ChaChaRng>,
-    }
-
-    impl CHSampler {
-        pub fn new(seed: u64) -> Self {
-            Self {
-                rng: RefCell::new(ChaChaRng::seed_from_u64(seed)),
-            }
-        }
-    }
-
-    impl ISampler for CHSampler {
-        fn sample(&self, n: usize) -> usize {
-            self.rng.borrow_mut().gen_range(0..n - 1)
-        }
-    }
-}
-
-#[cfg(test)]
+#[cfg(all(test, feature = "dyn_utils"))]
 mod tests {
-    use super::tests_fixture::*;
     use super::*;
-    use crate::dpf::tests_fixture::*;
 
     use hex_literal::hex;
+
+    use crate::dyn_utils::*;
 
     #[test]
     fn run_ok() {
@@ -381,16 +331,16 @@ mod tests {
         let vdmpf = VDMPF::new(
             80f64,
             1000,
-            Box::new(PRP::default()),
-            Box::new(CHSampler::new(ch_seed)),
-            Box::new(Sampler::new(prp_seed)),
+            Box::new(Aes256PRP::default()),
+            Box::new(ChaChaISampler::new(ch_seed)),
+            Box::new(ChaChaBSampler::new(prp_seed)),
             1000,
             16,
-            Box::new(PRG::default()),
-            Box::new(Hash::default()),
-            Box::new(Hash::default()),
-            Box::new(Hash::default()),
-            Box::new(Sampler::new(dpf_seed)),
+            Box::new(ChaChaPRG::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(ChaChaBSampler::new(dpf_seed)),
             1000,
         );
         let gen_res = vdmpf.gen(&fs.iter().collect::<Vec<_>>());

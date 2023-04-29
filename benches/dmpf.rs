@@ -1,117 +1,27 @@
-use std::cell::RefCell;
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockEncrypt, KeyInit};
-use aes::Aes256;
 use hex_literal::hex;
 use rand::prelude::*;
-use rand_chacha::ChaChaRng;
-use rand_seeder::Seeder;
-use sha3::digest::{ExtendableOutput, Update, XofReader};
-use sha3::Shake256;
 
-use vdmpf::dmpf::{ISampler, Permu, VDMPF};
-use vdmpf::dpf::{BSampler, Gen, PointFn};
+use vdmpf::dmpf::VDMPF;
+use vdmpf::dpf::PointFn;
+use vdmpf::dyn_utils::{Aes256PRP, ChaChaBSampler, ChaChaISampler, ChaChaPRG, Shake256Hash};
 use vdmpf::group::BGroup;
-
-#[derive(Default)]
-pub struct PRP {}
-
-impl Permu for PRP {
-    fn domains(&self) -> (u32, u32) {
-        (126, 128)
-    }
-
-    fn permu(&self, seed: &[u8], x: &mut [u8]) {
-        assert_eq!(x.len(), 16);
-        let mut rng: ChaChaRng = Seeder::from(seed).make_rng();
-        let key = GenericArray::from(rng.gen::<[u8; 32]>());
-        let mut block = GenericArray::from_mut_slice(&mut x[0..16]);
-        let cipher = Aes256::new(&key);
-        cipher.encrypt_block(&mut block);
-    }
-}
-
-pub struct CHSampler {
-    rng: RefCell<ChaChaRng>,
-}
-
-impl Default for CHSampler {
-    fn default() -> Self {
-        Self {
-            rng: RefCell::new(ChaChaRng::seed_from_u64(thread_rng().gen())),
-        }
-    }
-}
-
-impl ISampler for CHSampler {
-    fn sample(&self, n: usize) -> usize {
-        self.rng.borrow_mut().gen_range(0..n - 1)
-    }
-}
-
-#[derive(Default)]
-pub struct Hash {}
-
-impl Gen for Hash {
-    fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
-        let mut hasher = Shake256::default();
-        hasher.update(input);
-        let mut reader = hasher.finalize_xof();
-        let mut output = vec![0u8; output_len];
-        reader.read(&mut output);
-        output
-    }
-}
-
-#[derive(Default)]
-pub struct PRG {}
-
-impl Gen for PRG {
-    fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
-        let mut rng: ChaChaRng = Seeder::from(input).make_rng();
-        let mut output = vec![0u8; output_len];
-        rng.fill_bytes(&mut output);
-        output
-    }
-}
-
-pub struct Sampler {
-    pub rng: RefCell<ChaChaRng>,
-}
-
-impl Default for Sampler {
-    fn default() -> Self {
-        Self {
-            rng: RefCell::new(ChaChaRng::seed_from_u64(thread_rng().gen())),
-        }
-    }
-}
-
-impl BSampler for Sampler {
-    fn sample(&self, len: usize) -> Vec<u8> {
-        let mut buf = vec![0u8; len];
-        self.rng.borrow_mut().fill_bytes(&mut buf);
-        buf
-    }
-}
 
 fn var_t(point_n: usize) {
     let vdmpf = VDMPF::new(
         80f64,
         1000,
-        Box::new(PRP::default()),
-        Box::new(CHSampler::default()),
-        Box::new(Sampler::default()),
+        Box::new(Aes256PRP::default()),
+        Box::new(ChaChaISampler::default()),
+        Box::new(ChaChaBSampler::default()),
         1000,
         16,
-        Box::new(PRG::default()),
-        Box::new(Hash::default()),
-        Box::new(Hash::default()),
-        Box::new(Hash::default()),
-        Box::new(Sampler::default()),
+        Box::new(ChaChaPRG::default()),
+        Box::new(Shake256Hash::default()),
+        Box::new(Shake256Hash::default()),
+        Box::new(Shake256Hash::default()),
+        Box::new(ChaChaBSampler::default()),
         1000,
     );
     let mut fs = Vec::with_capacity(point_n);

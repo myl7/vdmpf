@@ -3,4 +3,6 @@
 
 pub mod dmpf;
 pub mod dpf;
+#[cfg(feature = "dyn_utils")]
+pub mod dyn_utils;
 pub mod group;

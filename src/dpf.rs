@@ -246,71 +246,13 @@ pub struct CW {
     pub ts: [bool; 2],
 }
 
-#[cfg(test)]
-pub(crate) mod tests_fixture {
-    use std::cell::RefCell;
-
-    use super::*;
-
-    use rand::prelude::*;
-    use rand_chacha::ChaChaRng;
-    use rand_seeder::Seeder;
-    use sha3::digest::{ExtendableOutput, Update, XofReader};
-    use sha3::Shake256;
-
-    #[derive(Default)]
-    pub struct Hash {}
-
-    impl Gen for Hash {
-        fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
-            let mut hasher = Shake256::default();
-            hasher.update(input);
-            let mut reader = hasher.finalize_xof();
-            let mut output = vec![0u8; output_len];
-            reader.read(&mut output);
-            output
-        }
-    }
-
-    #[derive(Default)]
-    pub struct PRG {}
-
-    impl Gen for PRG {
-        fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
-            let mut rng: ChaChaRng = Seeder::from(input).make_rng();
-            let mut output = vec![0u8; output_len];
-            rng.fill_bytes(&mut output);
-            output
-        }
-    }
-
-    pub struct Sampler {
-        pub rng: RefCell<ChaChaRng>,
-    }
-
-    impl Sampler {
-        pub fn new(seed: u64) -> Self {
-            Self {
-                rng: RefCell::new(ChaChaRng::seed_from_u64(seed)),
-            }
-        }
-    }
-
-    impl BSampler for Sampler {
-        fn sample(&self, len: usize) -> Vec<u8> {
-            let mut buf = vec![0u8; len];
-            self.rng.borrow_mut().fill_bytes(&mut buf);
-            buf
-        }
-    }
-}
-
-#[cfg(test)]
+#[cfg(all(test, feature = "dyn_utils"))]
 mod tests {
-    use super::tests_fixture::*;
     use super::*;
 
     use hex_literal::hex;
+
+    use crate::dyn_utils::*;
 
     #[test]
     fn run_ok() {
@@ -321,10 +263,10 @@ mod tests {
         let seed = 7;
         let vdpf = VDPF::new(
             16,
-            Box::new(PRG::default()),
-            Box::new(Hash::default()),
-            Box::new(Hash::default()),
-            Box::new(Sampler::new(seed)),
+            Box::new(ChaChaPRG::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(ChaChaBSampler::new(seed)),
             1000,
         );
         let gen_res = vdpf.gen(f.clone());
@@ -362,10 +304,10 @@ mod tests {
         let seed = 7;
         let vdpf = VDPF::new(
             16,
-            Box::new(PRG::default()),
-            Box::new(Hash::default()),
-            Box::new(Hash::default()),
-            Box::new(Sampler::new(seed)),
+            Box::new(ChaChaPRG::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(ChaChaBSampler::new(seed)),
             1000,
         );
         let gen_res = vdpf.gen(f.clone());
@@ -403,10 +345,10 @@ mod tests {
         let seed = 7;
         let vdpf = VDPF::new(
             16,
-            Box::new(PRG::default()),
-            Box::new(Hash::default()),
-            Box::new(Hash::default()),
-            Box::new(Sampler::new(seed)),
+            Box::new(ChaChaPRG::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(Shake256Hash::default()),
+            Box::new(ChaChaBSampler::new(seed)),
             1000,
         );
         let gen_res = vdpf.gen(f.clone());
