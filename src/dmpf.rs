@@ -3,6 +3,7 @@
 
 //! Distributed multi-point function (DMPF) implementation
 
+use std::collections::HashMap;
 use std::mem;
 use std::rc::Rc;
 
@@ -11,6 +12,7 @@ use num_integer::Integer;
 use statrs::distribution::{ContinuousCDF, Normal};
 
 use crate::dpf::{BSampler, Gen, PointFn, Share, VDPF};
+use crate::group::BGroup;
 
 /// `VerDMPF` in the paper.
 /// $\mathcal(k)$ is fixed to 3 since it affects the form of `ch_compact`.
@@ -31,6 +33,7 @@ pub struct VDMPF {
     prp_retry: usize,
     lambda: usize,
     vdpf: VDPF,
+    hash_prime: Box<dyn Gen>,
 }
 
 impl VDMPF {
@@ -45,6 +48,7 @@ impl VDMPF {
         prg: Box<dyn Gen>,
         hash: Box<dyn Gen>,
         hash_prime: Box<dyn Gen>,
+        hash_prime2: Box<dyn Gen>,
         dpf_sampler: Box<dyn BSampler>,
         gen_retry: usize,
     ) -> Self {
@@ -57,6 +61,7 @@ impl VDMPF {
             prp_retry,
             lambda,
             vdpf: VDPF::new(lambda, prg, hash, hash_prime, dpf_sampler, gen_retry),
+            hash_prime: hash_prime2,
         }
     }
 }
@@ -65,8 +70,7 @@ impl VDMPF {
 impl VDMPF {
     const K: usize = 3;
 
-    /// `Gen` in the paper.
-    /// PGP seed `seed` should be randomly sampled.
+    /// `Gen` in the paper
     pub fn gen(&self, fs: &[&PointFn]) -> Result<MShare, ()> {
         // Ensure $\alpha < 2^126$ so that $n\mathcal{k} < 2^128$ and we can use AES as PRP
         fs.iter()
@@ -142,6 +146,75 @@ impl VDMPF {
             mshare.ks.push(share);
         }
         Ok(mshare)
+    }
+
+    /// `BVEval` in the paper
+    pub fn eval(
+        &self,
+        b_party: bool,
+        mshare: &MShare,
+        xs: &[&[u8]],
+        t: usize,
+    ) -> (Vec<Vec<u8>>, Vec<u8>) {
+        assert_eq!(mshare.ks.first().map(|k| k.s0s.len()), Some(1));
+        let n = 2.to_biguint().unwrap().pow(126);
+        let m = self.ch_bucket(t);
+        let b = 2
+            .to_biguint()
+            .unwrap()
+            .pow(128)
+            .div_ceil(&m.to_biguint().unwrap());
+        let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
+        let mut inputs = vec![vec![]; m];
+        let mut dedup = HashMap::new();
+        xs.iter().enumerate().for_each(|(eta, x)| {
+            let is = (0..VDMPF::K)
+                .map(|i| {
+                    let xb = BigUint::from_bytes_be(x) + &n * i.to_biguint().unwrap();
+                    let mut xbb = xb.to_bytes_be();
+                    self.prp.permu(&mshare.seed, &mut xbb);
+                    let yb = BigUint::from_bytes_be(&xbb);
+                    (yb / &b).to_u64_digits()[0] as usize
+                })
+                .collect::<Vec<_>>();
+            let js = (0..VDMPF::K)
+                .map(|i| {
+                    let xb = BigUint::from_bytes_be(x) + n.clone() * i.to_biguint().unwrap();
+                    let mut xbb = xb.to_bytes_be();
+                    self.prp.permu(&mshare.seed, &mut xbb);
+                    let yb = BigUint::from_bytes_be(&xbb);
+                    let mut index = (yb % &b).to_bytes_be();
+                    for _ in 0..(n_prime - index.len()) {
+                        index.insert(0, 0);
+                    }
+                    index
+                })
+                .collect::<Vec<_>>();
+            js.into_iter().zip(is.iter()).for_each(|(j, i)| {
+                if let None = dedup.get(&(j.clone(), eta)) {
+                    dedup.insert((j.clone(), eta), ());
+                    inputs[*i].push((j, eta));
+                }
+            });
+        });
+        let mut outputs = vec![BGroup::from(vec![0; self.lambda]); xs.len()];
+        let mut pi = BGroup::from(vec![0; self.lambda]);
+        inputs.iter().enumerate().for_each(|(i, input)| {
+            let js = input.iter().map(|(j, _)| j.as_ref()).collect::<Vec<_>>();
+            let (ys, pii) = self.vdpf.eval(b_party, &mshare.ks[i], &js);
+            ys.into_iter().zip(input.iter()).for_each(|(y, (_, eta))| {
+                outputs[*eta] += y.as_ref();
+                let pi_tmp: Vec<u8> = (pi.clone() + pii.as_ref()).into();
+                pi += self.hash_prime.gen(&pi_tmp, self.lambda).as_ref();
+            });
+        });
+        let output_vals: Vec<Vec<u8>> = outputs.into_iter().map(|output| output.into()).collect();
+        (output_vals, pi.into())
+    }
+
+    /// `Verify` in the paper
+    pub fn verify(&self, pis: &[&[u8]; 2]) -> bool {
+        pis[0] == pis[1]
     }
 }
 
@@ -288,33 +361,41 @@ mod tests {
             Box::new(PRG::default()),
             Box::new(Hash::default()),
             Box::new(Hash::default()),
+            Box::new(Hash::default()),
             Box::new(Sampler::new(dpf_seed)),
             1000,
         );
         let gen_res = vdmpf.gen(&fs.iter().collect::<Vec<_>>());
         assert!(gen_res.is_ok(), "VDMPF gen failed");
-        let _mshare = gen_res.unwrap();
-        // TODO
+        let mut mshare0 = gen_res.unwrap();
+        let mut mshare1 = mshare0.clone();
+        mshare0
+            .ks
+            .iter_mut()
+            .for_each(|k| k.s0s = vec![k.s0s[0].clone()]);
+        mshare1
+            .ks
+            .iter_mut()
+            .for_each(|k| k.s0s = vec![k.s0s[1].clone()]);
 
-        // let s00 = share.s0s[0].clone();
-        // let s01 = share.s0s[1].clone();
-        // let xs = &[
-        //     hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").as_ref(),
-        //     hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").as_ref(),
-        //     hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
-        // ];
-        // share.s0s = vec![s01];
-        // let (y1s, pi1) = vdpf.eval(true, &share, xs);
-        // share.s0s = vec![s00];
-        // let (y0s, pi0) = vdpf.eval(false, &share, xs);
-        // assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
-        // for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
-        //     let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
-        //     if x == &f.a {
-        //         assert_eq!(y, f.b);
-        //     } else {
-        //         assert_eq!(y, hex!("00000000000000000000000000000000"));
-        //     }
-        // }
+        let xs = &[
+            hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").as_ref(),
+            hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").as_ref(),
+            hex!("0d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
+            hex!("0d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1b").as_ref(),
+        ];
+        let (y0s, pi0) = vdmpf.eval(false, &mshare0, xs, 2);
+        let (y1s, pi1) = vdmpf.eval(true, &mshare1, xs, 2);
+        assert_eq!(vdmpf.verify(&[&pi0, &pi1]), true);
+        for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
+            let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
+            if x == &fs[0].a {
+                assert_eq!(y, fs[0].b);
+            } else if x == &fs[1].a {
+                assert_eq!(y, fs[1].b);
+            } else {
+                assert_eq!(y, hex!("00000000000000000000000000000000"));
+            }
+        }
     }
 }

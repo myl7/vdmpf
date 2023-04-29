@@ -53,9 +53,7 @@ impl VDPF {
 
 /// `VerDPF` API
 impl VDPF {
-    /// `Gen` in the paper.
-    /// Starting seeds `s0s` should be randomly sampled, but not required to be different.
-    /// They should be both $\lambda$ bytes, which is the `lambda` field in the struct, otherwise panic.
+    /// `Gen` in the paper
     pub fn gen(&self, f: PointFn) -> Result<Share, ()> {
         for _ in 0..self.gen_retry {
             let mut s0_buf = self.sampler.sample(self.lambda * 2);
@@ -129,7 +127,7 @@ impl VDPF {
         (ys, pi.into())
     }
 
-    /// `Verify` in the paper.
+    /// `Verify` in the paper
     pub fn verify(&self, pis: &[&[u8]; 2]) -> bool {
         pis[0] == pis[1]
     }
