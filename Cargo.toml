@@ -24,6 +24,11 @@ rand_seeder = "0.2.3"
 rand_chacha = "0.3.1"
 hex-literal = "0.4.1"
 aes = "0.8.2"
+criterion = "0.4.0"
 
 [[bench]]
-name = "var_t"
+name = "dmpf"
+harness = false
+
+[profile.bench]
+debug = true
