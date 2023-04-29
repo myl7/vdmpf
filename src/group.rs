@@ -13,18 +13,18 @@ enum BGroupInner {
     Bit(bool),
 }
 
-impl Into<Vec<u8>> for BGroup {
-    fn into(self) -> Vec<u8> {
-        match self.0 {
+impl From<BGroup> for Vec<u8> {
+    fn from(b: BGroup) -> Self {
+        match b.0 {
             BGroupInner::Bytes(b) => b,
             BGroupInner::Bit(_) => panic!("BGroup contains bytes"),
         }
     }
 }
 
-impl Into<bool> for BGroup {
-    fn into(self) -> bool {
-        match self.0 {
+impl From<BGroup> for bool {
+    fn from(b: BGroup) -> Self {
+        match b.0 {
             BGroupInner::Bytes(_) => panic!("BGroup contains a bit"),
             BGroupInner::Bit(b) => b,
         }
@@ -57,11 +57,7 @@ impl AddAssign<&[u8]> for BGroup {
 impl AddAssign<bool> for BGroup {
     fn add_assign(&mut self, rhs: bool) {
         fn xor_bool(a: bool, b: bool) -> bool {
-            if a == b {
-                false
-            } else {
-                true
-            }
+            a != b
         }
 
         match &mut self.0 {

@@ -16,6 +16,7 @@ bitvec = "1.0.1"
 statrs = "0.16.0"
 num-bigint = "0.4.3"
 num-integer = "0.1.45"
+anyhow = "1.0.70"
 
 [dev-dependencies]
 sha3 = "0.10.6"
@@ -30,5 +31,6 @@ criterion = "0.4.0"
 name = "dmpf"
 harness = false
 
-[profile.bench]
-debug = true
+# For flamegraph
+# [profile.bench]
+# debug = true

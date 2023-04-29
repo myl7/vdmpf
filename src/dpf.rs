@@ -10,6 +10,7 @@
 
 use std::ops::Add;
 
+use anyhow::anyhow;
 use bitvec::prelude::*;
 
 use crate::group::BGroup;
@@ -54,7 +55,7 @@ impl VDPF {
 /// `VerDPF` API
 impl VDPF {
     /// `Gen` in the paper
-    pub fn gen(&self, f: PointFn) -> Result<Share, ()> {
+    pub fn gen(&self, f: PointFn) -> anyhow::Result<Share> {
         for _ in 0..self.gen_retry {
             let mut s0_buf = self.sampler.sample(self.lambda * 2);
             let s01 = s0_buf.split_off(self.lambda);
@@ -91,7 +92,7 @@ impl VDPF {
                     .into();
             return Ok(Share { s0s, cws, cs, ocw });
         }
-        Err(())
+        Err(anyhow!("VDPF fails"))
     }
 
     /// `BVEval` in the paper.

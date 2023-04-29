@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::mem;
 
+use anyhow::anyhow;
 use num_bigint::{BigUint, ToBigUint};
 use num_integer::Integer;
 use statrs::distribution::{ContinuousCDF, Normal};
@@ -71,7 +72,7 @@ impl VDMPF {
     const K: usize = 3;
 
     /// `Gen` in the paper
-    pub fn gen(&self, fs: &[&PointFn]) -> Result<MShare, ()> {
+    pub fn gen(&self, fs: &[&PointFn]) -> anyhow::Result<MShare> {
         // Ensure $\alpha < 2^126$ so that $n\mathcal{k} < 2^128$ and we can use AES as PRP
         // TODO: Guard according to the permu interface.
         // fs.iter().for_each(|f| assert!(f.a[0] & 0xc0 == 0));
@@ -88,14 +89,14 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
+        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
 
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
         let (table, seed) = loop {
             prp_retry -= 1;
             if prp_retry == 0 {
-                return Err(());
+                return Err(anyhow!("VDMPF fails"));
             }
             let seed = self.prp_sampler.sample(self.lambda);
             let hs = (0..VDMPF::K)
@@ -116,10 +117,7 @@ impl VDMPF {
             };
             break (table, seed);
         };
-        let mut mshare = MShare {
-            ks: vec![],
-            seed: seed.clone(),
-        };
+        let mut mshare = MShare { ks: vec![], seed };
         for item in table.into_iter() {
             let (a, b) = match item {
                 // `aj` is $a_j$ in the paper
@@ -162,7 +160,7 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
+        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
 
         let mut inputs = vec![vec![]; m];
         let mut dedup = HashMap::new();
@@ -182,7 +180,7 @@ impl VDMPF {
                 })
                 .collect::<Vec<_>>();
             js.into_iter().zip(is.iter()).for_each(|(j, i)| {
-                if let None = dedup.get(&(j.clone(), eta)) {
+                if dedup.get(&(j.clone(), eta)).is_none() {
                     dedup.insert((j.clone(), eta), ());
                     inputs[*i].push((j, eta));
                 }
@@ -266,7 +264,7 @@ fn pad_biguint(b: &mut Vec<u8>, n: usize) {
 
 fn usize_biguint(b: BigUint) -> usize {
     let bs = b.to_u64_digits();
-    if bs.len() > 0 {
+    if !bs.is_empty() {
         bs[0] as usize
     } else {
         0
