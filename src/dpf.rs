@@ -215,6 +215,7 @@ impl dyn Gen {
 
 /// Sample random bytes.
 pub trait BSampler {
+    /// Use `&self` because it does not need to remember any states
     fn sample(&self, len: usize) -> Vec<u8>;
 }
 

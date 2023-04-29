@@ -33,6 +33,7 @@ pub struct VDMPF {
     prp_retry: usize,
     lambda: usize,
     vdpf: VDPF,
+    /// $H'$ used by VDMPF particularly
     hash_prime: Box<dyn Gen>,
 }
 
@@ -48,7 +49,7 @@ impl VDMPF {
         prg: Box<dyn Gen>,
         hash: Box<dyn Gen>,
         hash_prime: Box<dyn Gen>,
-        hash_prime2: Box<dyn Gen>,
+        hash_prime_dmpf: Box<dyn Gen>,
         dpf_sampler: Box<dyn BSampler>,
         gen_retry: usize,
     ) -> Self {
@@ -61,7 +62,7 @@ impl VDMPF {
             prp_retry,
             lambda,
             vdpf: VDPF::new(lambda, prg, hash, hash_prime, dpf_sampler, gen_retry),
-            hash_prime: hash_prime2,
+            hash_prime: hash_prime_dmpf,
         }
     }
 }
@@ -152,7 +153,8 @@ impl VDMPF {
     }
 
     /// `BVEval` in the paper.
-    /// TODO: Handle `t`.
+    /// `t` presents possible points of the MPF, and it still works if `t` is larger than the actual one.
+    // TODO: Verify the above assertion.
     pub fn eval(
         &self,
         b_party: bool,
@@ -298,6 +300,7 @@ pub trait Permu {
 /// See [`VDMPF`].
 pub trait ISampler {
     /// Sample from `[0, n)`.
+    /// Use `&self`. See [`crate::dpf::BSampler::sample`] for the reason.
     fn sample(&self, n: usize) -> usize;
 }
 
