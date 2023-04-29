@@ -153,8 +153,8 @@ impl VDMPF {
     }
 
     /// `BVEval` in the paper.
-    /// `t` presents possible points of the MPF, and it still works if `t` is larger than the actual one.
-    // TODO: Verify the above assertion.
+    /// `t` presents possible points of the MPF, and it should work if `t` is larger than the actual one generally,
+    /// but now if `t` is larger/smaller, evaluation fails.
     pub fn eval(
         &self,
         b_party: bool,
@@ -411,8 +411,8 @@ mod tests {
             hex!("0d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
             hex!("0d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1b").as_ref(),
         ];
-        let (y0s, pi0) = vdmpf.eval(false, &mshare0, xs, 2);
-        let (y1s, pi1) = vdmpf.eval(true, &mshare1, xs, 2);
+        let (y0s, pi0) = vdmpf.eval(false, &mshare0, xs, fs.len());
+        let (y1s, pi1) = vdmpf.eval(true, &mshare1, xs, fs.len());
         assert_eq!(vdmpf.verify(&[&pi0, &pi1]), true);
         for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
             let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
