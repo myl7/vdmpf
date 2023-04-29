@@ -1,6 +1,6 @@
 # vdmpf
 
-Progress: DPF utility OK
+Progress: DPF & DMPF with tests OK but await interface justification
 
 Verifiable distributed multi-point function (DMPF) implementation
 
