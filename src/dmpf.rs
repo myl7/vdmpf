@@ -73,29 +73,32 @@ impl VDMPF {
     /// `Gen` in the paper
     pub fn gen(&self, fs: &[&PointFn]) -> Result<MShare, ()> {
         // Ensure $\alpha < 2^126$ so that $n\mathcal{k} < 2^128$ and we can use AES as PRP
-        fs.iter()
-            .for_each(|f| assert!(BigUint::from_bytes_be(&f.a) < 2.to_biguint().unwrap().pow(126)));
+        // TODO: Guard according to the permu interface.
+        // fs.iter().for_each(|f| assert!(f.a[0] & 0xc0 == 0));
+
+        // pow for generating `n` and `b`
+        let (n_pow, bn_pow) = self.prp.domains();
+        let n = 2.to_biguint().unwrap().pow(n_pow);
+        let t = fs.len();
+        // Use `usize` other than `f64` because all of them will be used as (part of) indexes
+        let m = self.ch_bucket(t);
+        let b = 2
+            .to_biguint()
+            .unwrap()
+            .pow(bn_pow)
+            .div_ceil(&m.to_biguint().unwrap());
+        // $n' / 8$ in the paper
+        let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
 
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
         let prp_rc = Rc::new(&self.prp);
-        let n = 2.to_biguint().unwrap().pow(126);
-        let (table, seed, n, b, n_prime) = loop {
+        let (table, seed) = loop {
             prp_retry -= 1;
             if prp_retry == 0 {
                 return Err(());
             }
             let seed = self.prp_sampler.sample(self.lambda);
-            // Use `usize` other than `f64` because all of them will be used as (part of) indexes.
-            let t = fs.len();
-            let m = self.ch_bucket(t);
-            let b = 2
-                .to_biguint()
-                .unwrap()
-                .pow(128)
-                .div_ceil(&m.to_biguint().unwrap());
-            // $n' / 8$ in the paper
-            let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
             let hs = (0..VDMPF::K)
                 .map(|i| {
                     let n = n.clone();
@@ -116,7 +119,7 @@ impl VDMPF {
                 Ok(table) => table,
                 Err(_) => continue,
             };
-            break (table, seed, n, b, n_prime);
+            break (table, seed);
         };
         let mut mshare = MShare {
             ks: vec![],
@@ -148,7 +151,8 @@ impl VDMPF {
         Ok(mshare)
     }
 
-    /// `BVEval` in the paper
+    /// `BVEval` in the paper.
+    /// TODO: Handle `t`.
     pub fn eval(
         &self,
         b_party: bool,
@@ -157,14 +161,19 @@ impl VDMPF {
         t: usize,
     ) -> (Vec<Vec<u8>>, Vec<u8>) {
         assert_eq!(mshare.ks.first().map(|k| k.s0s.len()), Some(1));
-        let n = 2.to_biguint().unwrap().pow(126);
+
+        let (n_pow, bn_pow) = self.prp.domains();
+        let n = 2.to_biguint().unwrap().pow(n_pow);
+        // Use `usize` other than `f64` because all of them will be used as (part of) indexes
         let m = self.ch_bucket(t);
         let b = 2
             .to_biguint()
             .unwrap()
-            .pow(128)
+            .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
+        // $n' / 8$ in the paper
         let n_prime = (b.bits() as f64 / 8 as f64).ceil() as usize;
+
         let mut inputs = vec![vec![]; m];
         let mut dedup = HashMap::new();
         xs.iter().enumerate().for_each(|(eta, x)| {
@@ -221,6 +230,7 @@ impl VDMPF {
 impl VDMPF {
     /// `CHBucket` in the paper.
     /// $\mathcal{k}$ is fixed to 3.
+    /// Use `usize` other than `f64` because it will be used as (part of) indexes.
     fn ch_bucket(&self, t: usize) -> usize {
         let tf = t as f64;
         let norm_a = Normal::new(6.3, 2.3).unwrap();
@@ -270,7 +280,17 @@ pub struct MShare {
 /// Interface for PRP.
 /// See [`VDMPF`].
 pub trait Permu {
-    /// Permutation $[n\mathcal{k} \rightarrow n\mathcal{k}]$ in-place
+    /// It returns the domains of the input $x / \mathcal{k}$ and output.
+    /// $\mathcal{k}$ is fixed to 3. See [`VDMPF`].
+    /// The output domain should be larger than the input one.
+    /// Both the domains are presented as the power of 2, which limitted the possible domain size values,
+    /// but it should be reasonable for most use cases.
+    fn domains(&self) -> (u32, u32);
+
+    /// Permutation $[n\mathcal{k} \rightarrow n\mathcal{k}]$ in the paper.
+    /// In-place because `x` has a fixed size.
+    /// However, the output domain can be a little larger than the input one as long as the space is enough.
+    /// We suggest using an AES-based PRP as the tests for convenience.
     fn permu(&self, seed: &[u8], x: &mut [u8]);
 }
 
@@ -298,6 +318,10 @@ pub(crate) mod tests_fixture {
     pub struct PRP {}
 
     impl Permu for PRP {
+        fn domains(&self) -> (u32, u32) {
+            (126, 128)
+        }
+
         fn permu(&self, seed: &[u8], x: &mut [u8]) {
             assert_eq!(x.len(), 16);
             let mut rng: ChaChaRng = Seeder::from(seed).make_rng();
