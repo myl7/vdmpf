@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::mem;
-use std::rc::Rc;
 
 use num_bigint::{BigUint, ToBigUint};
 use num_integer::Integer;
@@ -93,7 +92,6 @@ impl VDMPF {
 
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
-        let prp_rc = Rc::new(&self.prp);
         let (table, seed) = loop {
             prp_retry -= 1;
             if prp_retry == 0 {
@@ -103,15 +101,11 @@ impl VDMPF {
             let hs = (0..VDMPF::K)
                 .map(|i| {
                     let n = n.clone();
-                    let prp = prp_rc.clone();
                     let b = b.clone();
                     let seed = seed.clone();
                     move |x: &[u8]| {
-                        let xb = BigUint::from_bytes_be(x) + &n * i.to_biguint().unwrap();
-                        let mut xbb = xb.to_bytes_be();
-                        prp.permu(&seed, &mut xbb);
-                        let yb = BigUint::from_bytes_be(&xbb);
-                        (yb / &b).to_u64_digits()[0] as usize
+                        let yb = self.prp_result(x, &n, i, &seed);
+                        usize_biguint(yb / &b)
                     }
                 })
                 .collect::<Vec<_>>();
@@ -130,15 +124,9 @@ impl VDMPF {
             let (a, b) = match item {
                 // `aj` is $a_j$ in the paper
                 Some((aji, k)) => {
-                    let xb = BigUint::from_bytes_be(fs[aji].a.as_ref())
-                        + n.clone() * k.to_biguint().unwrap();
-                    let mut xbb = xb.to_bytes_be();
-                    prp_rc.permu(&seed, &mut xbb);
-                    let yb = BigUint::from_bytes_be(&xbb);
+                    let yb = self.prp_result(fs[aji].a.as_ref(), &n, k, &mshare.seed);
                     let mut index = (yb % &b).to_bytes_be();
-                    for _ in 0..(n_prime - index.len()) {
-                        index.insert(0, 0);
-                    }
+                    pad_biguint(&mut index, n_prime);
                     let a = index;
                     let b = fs[aji].b.clone();
                     (a, b)
@@ -181,23 +169,15 @@ impl VDMPF {
         xs.iter().enumerate().for_each(|(eta, x)| {
             let is = (0..VDMPF::K)
                 .map(|i| {
-                    let xb = BigUint::from_bytes_be(x) + &n * i.to_biguint().unwrap();
-                    let mut xbb = xb.to_bytes_be();
-                    self.prp.permu(&mshare.seed, &mut xbb);
-                    let yb = BigUint::from_bytes_be(&xbb);
-                    (yb / &b).to_u64_digits()[0] as usize
+                    let yb = self.prp_result(x, &n, i, &mshare.seed);
+                    usize_biguint(yb / &b)
                 })
                 .collect::<Vec<_>>();
             let js = (0..VDMPF::K)
                 .map(|i| {
-                    let xb = BigUint::from_bytes_be(x) + n.clone() * i.to_biguint().unwrap();
-                    let mut xbb = xb.to_bytes_be();
-                    self.prp.permu(&mshare.seed, &mut xbb);
-                    let yb = BigUint::from_bytes_be(&xbb);
+                    let yb = self.prp_result(x, &n, i, &mshare.seed);
                     let mut index = (yb % &b).to_bytes_be();
-                    for _ in 0..(n_prime - index.len()) {
-                        index.insert(0, 0);
-                    }
+                    pad_biguint(&mut index, n_prime);
                     index
                 })
                 .collect::<Vec<_>>();
@@ -267,6 +247,29 @@ impl VDMPF {
             }
         }
         Ok(table)
+    }
+
+    fn prp_result(&self, x: &[u8], n: &BigUint, i: usize, seed: &[u8]) -> BigUint {
+        let xb = BigUint::from_bytes_be(x) + n * i.to_biguint().unwrap();
+        let mut xbb = xb.to_bytes_be();
+        pad_biguint(&mut xbb, 16);
+        self.prp.permu(seed, &mut xbb);
+        BigUint::from_bytes_be(&xbb)
+    }
+}
+
+fn pad_biguint(b: &mut Vec<u8>, n: usize) {
+    for _ in 0..(n - b.len()) {
+        b.insert(0, 0);
+    }
+}
+
+fn usize_biguint(b: BigUint) -> usize {
+    let bs = b.to_u64_digits();
+    if bs.len() > 0 {
+        bs[0] as usize
+    } else {
+        0
     }
 }
 
@@ -363,7 +366,7 @@ mod tests {
     use hex_literal::hex;
 
     #[test]
-    fn test_gen_eval_verify_ok() {
+    fn run_ok() {
         let fs = [
             PointFn {
                 a: hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),

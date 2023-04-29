@@ -3,4 +3,4 @@
 
 pub mod dmpf;
 pub mod dpf;
-mod group;
+pub mod group;

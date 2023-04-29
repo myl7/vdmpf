@@ -312,7 +312,7 @@ mod tests {
     use hex_literal::hex;
 
     #[test]
-    fn test_gen_eval_verify_ok() {
+    fn run_ok() {
         let f = PointFn {
             a: hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),
             b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
@@ -353,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gen_eval_verify_ok_with_diff_len() {
+    fn ab_diff_len() {
         let f = PointFn {
             a: hex!("a1b2c3d4a1b2c3d4").to_vec(),
             b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn test_gen_zeros() {
+    fn ab_zeros() {
         let f = PointFn {
             a: hex!("00000000000000000000000000000000").to_vec(),
             b: hex!("00000000000000000000000000000000").to_vec(),
