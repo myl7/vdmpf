@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use rand::prelude::*;
@@ -76,14 +78,14 @@ fn criterion_benches(c: &mut Criterion) {
         fs.push(PointFn { a, b });
     }
 
-    // c.bench_function("pcg64mcgprg_gen_t1k", |b| {
-    //     b.iter(|| {
-    //         gen_t1k(
-    //             black_box(fs.clone()),
-    //             black_box(Box::new(Pcg64McgPRG::default())),
-    //         )
-    //     })
-    // });
+    c.bench_function("aes128prg_gen_t1k", |b| {
+        b.iter(|| {
+            gen_t1k(
+                black_box(fs.clone()),
+                black_box(Box::new(Aes128PRG::default())),
+            )
+        })
+    });
     c.bench_function("chachaprg_gen_t1k", |b| {
         b.iter(|| {
             gen_t1k(
@@ -94,7 +96,6 @@ fn criterion_benches(c: &mut Criterion) {
     });
 
     let xs_n = 100_000;
-    // let [mshare0_pcg64mcg, _] = gen_t1k(fs.clone(), Box::new(Pcg64McgPRG::default()));
     let mut xs = fs.iter().map(|f| f.a.clone()).collect::<Vec<_>>();
     for _ in 0..(xs_n - fs.len()) {
         let mut a = vec![0; 16];
@@ -103,18 +104,19 @@ fn criterion_benches(c: &mut Criterion) {
         xs.push(a);
     }
 
-    // c.bench_function("pcg64mcgprg_eval_xs100k", |b| {
-    //     b.iter(|| {
-    //         eval_xs100k(
-    //             black_box(mshare0_pcg64mcg.clone()),
-    //             black_box(xs.clone()),
-    //             black_box(fs.len()),
-    //             black_box(Box::new(Pcg64McgPRG::default())),
-    //         )
-    //     })
-    // });
+    let [mshare0_aes128, _] = gen_t1k(fs.clone(), Box::new(Aes128PRG::default()));
+    c.bench_function("aes128prg_eval_xs100k", |b| {
+        b.iter(|| {
+            eval_xs100k(
+                black_box(mshare0_aes128.clone()),
+                black_box(xs.clone()),
+                black_box(fs.len()),
+                black_box(Box::new(Aes128PRG::default())),
+            )
+        })
+    });
 
-    let [mshare0_chacha, _] = gen_t1k(fs.clone(), Box::new(Pcg64McgPRG::default()));
+    let [mshare0_chacha, _] = gen_t1k(fs.clone(), Box::new(ChaChaPRG::default()));
     c.bench_function("chachaprg_eval_xs100k", |b| {
         b.iter(|| {
             eval_xs100k(
@@ -129,7 +131,7 @@ fn criterion_benches(c: &mut Criterion) {
 
 criterion_group! {
     name = benches;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default().sample_size(10).measurement_time(Duration::from_secs(90));
     targets = criterion_benches
 }
 criterion_main!(benches);
