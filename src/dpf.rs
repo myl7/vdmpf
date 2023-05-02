@@ -59,7 +59,7 @@ impl VDPF {
         for _ in 0..self.gen_retry {
             let mut s0_buf = self.sampler.sample(self.lambda * 2);
             let s01 = s0_buf.split_off(self.lambda);
-            let s00 = s0_buf.split_off(self.lambda);
+            let s00 = s0_buf;
             let s0s = vec![s00.clone(), s01.clone()];
 
             let n = f.a.view_bits::<Msb0>().len();
@@ -201,10 +201,8 @@ impl dyn Gen {
         let mut buf = self.gen(input, lambda * 2 + 1);
         let t_buf = buf.split_off(2 * lambda);
         let ts = [t_buf.view_bits::<Msb0>()[0], t_buf.view_bits::<Msb0>()[1]];
-        let mut s_buf = buf.split_off(lambda);
+        let sl = buf.split_off(lambda);
         let sr = buf;
-        s_buf.split_off(lambda).truncate(0);
-        let sl = s_buf;
         [(sl, ts[0]), (sr, ts[1])]
     }
 }
