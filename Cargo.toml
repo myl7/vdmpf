@@ -18,6 +18,7 @@ dyn_utils = [
   "dep:rand",
   "dep:rand_chacha",
   "dep:rand_seeder",
+  "dep:rand_pcg",
 ]
 
 [dependencies]
@@ -31,6 +32,7 @@ rand = { version = "0.8.5", optional = true }
 rand_seeder = { version = "0.2.3", optional = true }
 rand_chacha = { version = "0.3.1", optional = true }
 aes = { version = "0.8.2", optional = true }
+rand_pcg = { version = "0.3.1", optional = true }
 
 [dev-dependencies]
 hex-literal = "0.4.1"
@@ -42,5 +44,5 @@ harness = false
 required-features = ["dyn_utils"]
 
 # For flamegraph
-# [profile.bench]
-# debug = true
+[profile.bench]
+debug = true

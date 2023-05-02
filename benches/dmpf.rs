@@ -1,14 +1,12 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use hex_literal::hex;
 use rand::prelude::*;
 
-use vdmpf::dmpf::VDMPF;
-use vdmpf::dpf::PointFn;
-use vdmpf::dyn_utils::{Aes256PRP, ChaChaBSampler, ChaChaISampler, ChaChaPRG, Shake256Hash};
-use vdmpf::group::BGroup;
+use vdmpf::dmpf::{MShare, VDMPF};
+use vdmpf::dpf::{Gen, PointFn};
+use vdmpf::dyn_utils::*;
 
-fn var_t(point_n: usize) {
+fn gen_t1k(fs: Vec<PointFn>, prg: Box<dyn Gen>) -> [MShare; 2] {
     let vdmpf = VDMPF::new(
         80f64,
         1000,
@@ -17,23 +15,13 @@ fn var_t(point_n: usize) {
         Box::new(ChaChaBSampler::default()),
         1000,
         16,
-        Box::new(ChaChaPRG::default()),
+        prg,
         Box::new(Shake256Hash::default()),
         Box::new(Shake256Hash::default()),
         Box::new(Shake256Hash::default()),
         Box::new(ChaChaBSampler::default()),
         1000,
     );
-    let mut fs = Vec::with_capacity(point_n);
-    let mut f_rng = thread_rng();
-    for _ in 0..point_n {
-        let mut a = vec![0; 16];
-        f_rng.fill_bytes(&mut a);
-        a[0] = 0x07;
-        let mut b = vec![0; 16];
-        f_rng.fill_bytes(&mut b);
-        fs.push(PointFn { a, b });
-    }
     let fs_ref = fs.iter().collect::<Vec<_>>();
     let mut mshare0 = vdmpf.gen(&fs_ref).unwrap();
     let mut mshare1 = mshare0.clone();
@@ -45,35 +33,103 @@ fn var_t(point_n: usize) {
         .ks
         .iter_mut()
         .for_each(|k| k.s0s = vec![k.s0s[1].clone()]);
+    [mshare0, mshare1]
+}
 
-    let mut xs = fs.iter().map(|f| f.a.clone()).collect::<Vec<_>>();
+fn eval_xs100k(
+    mshare: MShare,
+    xs: Vec<Vec<u8>>,
+    t: usize,
+    prg: Box<dyn Gen>,
+) -> (Vec<Vec<u8>>, Vec<u8>) {
+    let vdmpf = VDMPF::new(
+        80f64,
+        1000,
+        Box::new(Aes256PRP::default()),
+        Box::new(ChaChaISampler::default()),
+        Box::new(ChaChaBSampler::default()),
+        1000,
+        16,
+        prg,
+        Box::new(Shake256Hash::default()),
+        Box::new(Shake256Hash::default()),
+        Box::new(Shake256Hash::default()),
+        Box::new(ChaChaBSampler::default()),
+        1000,
+    );
+    let xs_ref = xs.iter().map(|x| x.as_ref()).collect::<Vec<_>>();
+    let (y0s, pi0) = vdmpf.eval(false, &mshare, &xs_ref, t);
+    (y0s, pi0)
+}
+
+fn criterion_benches(c: &mut Criterion) {
+    // Multi-point function with 1000 points
+    let point_n = 1000;
+    let mut fs = Vec::with_capacity(point_n);
+    let mut f_rng = thread_rng();
     for _ in 0..point_n {
+        let mut a = vec![0; 16];
+        f_rng.fill_bytes(&mut a);
+        a[0] = 0x07;
+        let mut b = vec![0; 16];
+        f_rng.fill_bytes(&mut b);
+        fs.push(PointFn { a, b });
+    }
+
+    // c.bench_function("pcg64mcgprg_gen_t1k", |b| {
+    //     b.iter(|| {
+    //         gen_t1k(
+    //             black_box(fs.clone()),
+    //             black_box(Box::new(Pcg64McgPRG::default())),
+    //         )
+    //     })
+    // });
+    c.bench_function("chachaprg_gen_t1k", |b| {
+        b.iter(|| {
+            gen_t1k(
+                black_box(fs.clone()),
+                black_box(Box::new(ChaChaPRG::default())),
+            )
+        })
+    });
+
+    let xs_n = 100_000;
+    // let [mshare0_pcg64mcg, _] = gen_t1k(fs.clone(), Box::new(Pcg64McgPRG::default()));
+    let mut xs = fs.iter().map(|f| f.a.clone()).collect::<Vec<_>>();
+    for _ in 0..(xs_n - fs.len()) {
         let mut a = vec![0; 16];
         f_rng.fill_bytes(&mut a);
         a[0] = 0x0f;
         xs.push(a);
     }
-    let xs_ref = xs.iter().map(|x| x.as_ref()).collect::<Vec<_>>();
-    let (y0s, pi0) = vdmpf.eval(false, &mshare0, &xs_ref, fs.len());
-    let (y1s, pi1) = vdmpf.eval(true, &mshare1, &xs_ref, fs.len());
-    assert_eq!(vdmpf.verify(&[&pi0, &pi1]), true);
-    for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
-        let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
-        match fs.iter().find(|f| f.a == *x) {
-            Some(f) => assert_eq!(y, f.b),
-            None => assert_eq!(y, hex!("00000000000000000000000000000000")),
-        }
-    }
-}
 
-fn criterion_bench(c: &mut Criterion) {
-    c.bench_function("t 1000", |b| b.iter(|| var_t(black_box(1000))));
+    // c.bench_function("pcg64mcgprg_eval_xs100k", |b| {
+    //     b.iter(|| {
+    //         eval_xs100k(
+    //             black_box(mshare0_pcg64mcg.clone()),
+    //             black_box(xs.clone()),
+    //             black_box(fs.len()),
+    //             black_box(Box::new(Pcg64McgPRG::default())),
+    //         )
+    //     })
+    // });
+
+    let [mshare0_chacha, _] = gen_t1k(fs.clone(), Box::new(Pcg64McgPRG::default()));
+    c.bench_function("chachaprg_eval_xs100k", |b| {
+        b.iter(|| {
+            eval_xs100k(
+                black_box(mshare0_chacha.clone()),
+                black_box(xs.clone()),
+                black_box(fs.len()),
+                black_box(Box::new(ChaChaPRG::default())),
+            )
+        })
+    });
 }
 
 criterion_group! {
     name = benches;
-    // This can be any expression that returns a `Criterion` object.
     config = Criterion::default().sample_size(10);
-    targets = criterion_bench
+    targets = criterion_benches
 }
 criterion_main!(benches);

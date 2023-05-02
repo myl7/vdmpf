@@ -5,6 +5,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes256;
 use rand::prelude::*;
 use rand_chacha::ChaChaRng;
+use rand_pcg::Pcg64Mcg;
 use rand_seeder::Seeder;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
@@ -76,6 +77,18 @@ pub struct ChaChaPRG {}
 impl Gen for ChaChaPRG {
     fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
         let mut rng: ChaChaRng = Seeder::from(input).make_rng();
+        let mut output = vec![0u8; output_len];
+        rng.fill_bytes(&mut output);
+        output
+    }
+}
+
+#[derive(Default)]
+pub struct Pcg64McgPRG {}
+
+impl Gen for Pcg64McgPRG {
+    fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
+        let mut rng: Pcg64Mcg = Seeder::from(input).make_rng();
         let mut output = vec![0u8; output_len];
         rng.fill_bytes(&mut output);
         output
