@@ -63,35 +63,28 @@ impl VDPF {
             let s0s = vec![s00.clone(), s01.clone()];
 
             let n = f.a.view_bits::<Msb0>().len();
-            let mut nodes = [Vec::with_capacity(n + 2), Vec::with_capacity(n + 2)];
-            nodes[0].push((s00, false));
-            nodes[1].push((s01, true));
+            let mut nodes = [(s00, false), (s01, true)];
             let mut cws = Vec::with_capacity(n);
             for i in 0..n {
-                let (cw, [node0, node1]) =
-                    self.cw_gen(&[&nodes[0][i], &nodes[1][i]], f.a.view_bits::<Msb0>()[i]);
-                nodes[0].push(node0);
-                nodes[1].push(node1);
+                let cw: CW;
+                (cw, nodes) = self.cw_gen(nodes, f.a.view_bits::<Msb0>()[i]);
                 cws.push(cw);
             }
-            let pi0 = self.hash.gen(
-                &[f.a.clone(), nodes[0][n].0.clone()].concat(),
-                self.lambda * 4,
-            );
-            let pi1 = self.hash.gen(
-                &[f.a.clone(), nodes[1][n].0.clone()].concat(),
-                self.lambda * 4,
-            );
+            let pi0 = self
+                .hash
+                .gen(&[f.a.clone(), nodes[0].0.clone()].concat(), self.lambda * 4);
+            let pi1 = self
+                .hash
+                .gen(&[f.a.clone(), nodes[1].0.clone()].concat(), self.lambda * 4);
             let cs: Vec<u8> = (BGroup::from(pi0) + pi1.as_ref()).into();
-            nodes[0].push((nodes[0][n].0.clone(), nodes[0][n].0.view_bits::<Lsb0>()[0]));
-            nodes[1].push((nodes[1][n].0.clone(), nodes[1][n].0.view_bits::<Lsb0>()[0]));
-            if nodes[0][n + 1].1 == nodes[1][n + 1].1 {
+            nodes[0].1 = nodes[0].0.view_bits::<Lsb0>()[0];
+            nodes[1].1 = nodes[1].0.view_bits::<Lsb0>()[0];
+            if nodes[0].1 == nodes[1].1 {
                 continue;
             }
             // Since we use xor as plus, -a == a in the group
             let ocw: Vec<u8> =
-                (BGroup::from(f.b) + nodes[0][n + 1].0.as_ref() + nodes[1][n + 1].0.as_ref())
-                    .into();
+                (BGroup::from(f.b) + nodes[0].0.as_ref() + nodes[1].0.as_ref()).into();
             return Ok(Share { s0s, cws, cs, ocw });
         }
         Err(anyhow!("VDPF fails"))
@@ -155,11 +148,11 @@ impl VDPF {
     /// `CWGen` in the paper
     fn cw_gen(
         &self,
-        [(s0, t0), (s1, t1)]: &[&(Vec<u8>, bool); 2],
+        [(s0, t0), (s1, t1)]: [(Vec<u8>, bool); 2],
         x: bool,
     ) -> (CW, [(Vec<u8>, bool); 2]) {
-        let [(s0l, t0l), (s0r, t0r)] = self.prg.prg_gen(self.lambda, s0);
-        let [(s1l, t1l), (s1r, t1r)] = self.prg.prg_gen(self.lambda, s1);
+        let [(s0l, t0l), (s0r, t0r)] = self.prg.prg_gen(self.lambda, &s0);
+        let [(s1l, t1l), (s1r, t1r)] = self.prg.prg_gen(self.lambda, &s1);
         let ss = [[s0l, s0r], [s1l, s1r]];
         let ts = [[t0l, t0r], [t1l, t1r]];
         let (diff, same) = if x { (1, 0) } else { (0, 1) };
@@ -170,12 +163,12 @@ impl VDPF {
         ];
         let nodes = [
             (
-                correct(BGroup::from(ss[0][diff].clone()), sc.as_ref(), *t0).into(),
-                correct(BGroup::from(ts[0][diff]), tcs[diff], *t0).into(),
+                correct(BGroup::from(ss[0][diff].clone()), sc.as_ref(), t0).into(),
+                correct(BGroup::from(ts[0][diff]), tcs[diff], t0).into(),
             ),
             (
-                correct(BGroup::from(ss[1][diff].clone()), sc.as_ref(), *t1).into(),
-                correct(BGroup::from(ts[1][diff]), tcs[diff], *t1).into(),
+                correct(BGroup::from(ss[1][diff].clone()), sc.as_ref(), t1).into(),
+                correct(BGroup::from(ts[1][diff]), tcs[diff], t1).into(),
             ),
         ];
         let cw = CW { s: sc, ts: tcs };
