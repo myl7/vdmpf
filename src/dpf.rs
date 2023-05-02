@@ -105,7 +105,7 @@ impl VDPF {
         for x in xs {
             let mut node = (share.s0s[0].clone(), b);
             for i in 0..x.view_bits::<Msb0>().len() {
-                let [node0, node1] = self.node_expand(&node, share.cws[i].clone());
+                let [node0, node1] = self.node_expand(&node, &share.cws[i]);
                 if x.view_bits::<Msb0>()[i] {
                     node = node1;
                 } else {
@@ -136,7 +136,7 @@ impl VDPF {
 
 impl VDPF {
     /// `NodeExpand` in the paper
-    fn node_expand(&self, (s, t): &(Vec<u8>, bool), cw: CW) -> [(Vec<u8>, bool); 2] {
+    fn node_expand(&self, (s, t): &(Vec<u8>, bool), cw: &CW) -> [(Vec<u8>, bool); 2] {
         let [(sl, tl), (sr, tr)] = self.prg.prg_gen(self.lambda, s);
         [
             (
