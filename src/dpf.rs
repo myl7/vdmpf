@@ -62,9 +62,11 @@ impl VDPF {
             let s00 = s0_buf.split_off(self.lambda);
             let s0s = vec![s00.clone(), s01.clone()];
 
-            let mut nodes = [vec![(s00, false)], vec![(s01, true)]];
-            let mut cws = vec![];
             let n = f.a.view_bits::<Msb0>().len();
+            let mut nodes = [Vec::with_capacity(n + 2), Vec::with_capacity(n + 2)];
+            nodes[0].push((s00, false));
+            nodes[1].push((s01, true));
+            let mut cws = Vec::with_capacity(n);
             for i in 0..n {
                 let (cw, [node0, node1]) =
                     self.cw_gen(&[&nodes[0][i], &nodes[1][i]], f.a.view_bits::<Msb0>()[i]);
