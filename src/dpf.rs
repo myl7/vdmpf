@@ -65,7 +65,8 @@ impl VDPF {
             let n = f.a.view_bits::<Msb0>().len();
             let mut nodes = [(s00, false), (s01, true)];
             let mut cws = Vec::with_capacity(n);
-            for i in 0..n {
+            let leap = f.a_leap.unwrap_or(0);
+            for i in leap..n {
                 let cw: CW;
                 (cw, nodes) = self.cw_gen(nodes, f.a.view_bits::<Msb0>()[i]);
                 cws.push(cw);
@@ -92,15 +93,22 @@ impl VDPF {
 
     /// `BVEval` in the paper.
     /// `b` is the party num, which is 0 / 1.
-    pub fn eval(&self, b: bool, share: &Share, xs: &[&[u8]]) -> (Vec<Vec<u8>>, Vec<u8>) {
+    pub fn eval(
+        &self,
+        b: bool,
+        share: &Share,
+        xs: &[&[u8]],
+        x_leap: Option<usize>,
+    ) -> (Vec<Vec<u8>>, Vec<u8>) {
         assert_eq!(share.s0s.len(), 1);
 
         let mut ys: Vec<Vec<u8>> = vec![];
         let mut pi = BGroup::from(share.cs.clone());
         for x in xs {
             let mut node = (share.s0s[0].clone(), b);
-            for i in 0..x.view_bits::<Msb0>().len() {
-                let [node0, node1] = self.node_expand(&node, &share.cws[i]);
+            let leap = x_leap.unwrap_or(0);
+            for i in leap..x.view_bits::<Msb0>().len() {
+                let [node0, node1] = self.node_expand(&node, &share.cws[i - leap]);
                 if x.view_bits::<Msb0>()[i] {
                     node = node1;
                 } else {
@@ -220,6 +228,8 @@ pub struct PointFn {
     pub a: Vec<u8>,
     /// $\beta$ in the paper
     pub b: Vec<u8>,
+    /// Bit num to make $\alpha$ byte-aligned
+    pub a_leap: Option<usize>,
 }
 
 /// `k` in the paper.
@@ -252,6 +262,7 @@ mod tests {
         let f = PointFn {
             a: hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),
             b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
+            a_leap: None,
         };
         let seed = 7;
         let vdpf = VDPF::new(
@@ -274,9 +285,9 @@ mod tests {
             hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
         ];
         share.s0s = vec![s01];
-        let (y1s, pi1) = vdpf.eval(true, &share, xs);
+        let (y1s, pi1) = vdpf.eval(true, &share, xs, None);
         share.s0s = vec![s00];
-        let (y0s, pi0) = vdpf.eval(false, &share, xs);
+        let (y0s, pi0) = vdpf.eval(false, &share, xs, None);
         assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
         for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
             let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
@@ -293,6 +304,7 @@ mod tests {
         let f = PointFn {
             a: hex!("a1b2c3d4a1b2c3d4").to_vec(),
             b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
+            a_leap: None,
         };
         let seed = 7;
         let vdpf = VDPF::new(
@@ -315,9 +327,9 @@ mod tests {
             hex!("4d3c2b1a4d3c2b1a").as_ref(),
         ];
         share.s0s = vec![s01];
-        let (y1s, pi1) = vdpf.eval(true, &share, xs);
+        let (y1s, pi1) = vdpf.eval(true, &share, xs, None);
         share.s0s = vec![s00];
-        let (y0s, pi0) = vdpf.eval(false, &share, xs);
+        let (y0s, pi0) = vdpf.eval(false, &share, xs, None);
         assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
         for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
             let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
@@ -334,6 +346,7 @@ mod tests {
         let f = PointFn {
             a: hex!("00000000000000000000000000000000").to_vec(),
             b: hex!("00000000000000000000000000000000").to_vec(),
+            a_leap: None,
         };
         let seed = 7;
         let vdpf = VDPF::new(

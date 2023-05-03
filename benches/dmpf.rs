@@ -75,7 +75,7 @@ fn criterion_benches(c: &mut Criterion) {
         a[0] = 0x07;
         let mut b = vec![0; 16];
         f_rng.fill_bytes(&mut b);
-        fs.push(PointFn { a, b });
+        fs.push(PointFn { a, b, a_leap: None });
     }
 
     c.bench_function("aes128prg_gen_t1k", |b| {
