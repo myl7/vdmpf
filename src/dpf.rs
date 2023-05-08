@@ -8,12 +8,10 @@
 // For bits, true = 1, false = 0.
 // When both L / R and 0 / 1 exist, put 0 / 1 first in indexing.
 
-use std::ops::Add;
-
 use anyhow::anyhow;
 use bitvec::prelude::*;
 
-use crate::group::{xor_bool, xor_bytes, BGroup};
+use crate::group::{xor_bool, xor_bytes};
 
 /// `VerDPF` in the paper
 pub struct VDPF {
@@ -55,7 +53,7 @@ impl VDPF {
 /// `VerDPF` API
 impl VDPF {
     /// `Gen` in the paper
-    pub fn gen(&self, f: PointFn) -> anyhow::Result<Share> {
+    pub fn gen(&self, f: &PointFn) -> anyhow::Result<Share> {
         for _ in 0..self.gen_retry {
             let mut s0_buf = self.sampler.sample(self.lambda * 2);
             let s01 = s0_buf.split_off(self.lambda);
@@ -81,20 +79,22 @@ impl VDPF {
                 );
             }
             let mut pi0 = f.a.clone();
-            pi0.extend_from_slice(&vec![0; 3 * self.lambda]);
-            self.hash.gen(&mut pi0, &nodes[0].0);
             let mut pi1 = f.a.clone();
-            pi1.extend_from_slice(&vec![0; 3 * self.lambda]);
+            pi0.extend_from_slice(&vec![0; 3 * self.lambda + self.lambda - f.a.len()]);
+            pi1.extend_from_slice(&vec![0; 3 * self.lambda + self.lambda - f.a.len()]);
+            self.hash.gen(&mut pi0, &nodes[0].0);
             self.hash.gen(&mut pi1, &nodes[1].0);
-            let cs: Vec<u8> = (BGroup::from(pi0) + pi1.as_ref()).into();
+            xor_bytes(&mut pi0, &pi1);
+            let cs = pi0;
             nodes[0].1 = nodes[0].0.view_bits::<Lsb0>()[0];
             nodes[1].1 = nodes[1].0.view_bits::<Lsb0>()[0];
             if nodes[0].1 == nodes[1].1 {
                 continue;
             }
             // Since we use xor as plus, -a == a in the group
-            let ocw: Vec<u8> =
-                (BGroup::from(f.b) + nodes[0].0.as_ref() + nodes[1].0.as_ref()).into();
+            let mut ocw = f.b.clone();
+            xor_bytes(&mut ocw, &nodes[0].0);
+            xor_bytes(&mut ocw, &nodes[1].0);
             return Ok(Share { s0s, cws, cs, ocw });
         }
         Err(anyhow!("VDPF fails"))
@@ -102,13 +102,12 @@ impl VDPF {
 
     /// `BVEval` in the paper.
     /// `b` is the party num, which is 0 / 1.
-    pub fn eval(&self, b: bool, share: &Share, xs: &[&[u8]]) -> (Vec<Vec<u8>>, Vec<u8>) {
+    pub fn eval(&self, b: bool, share: &Share, xs: &[&[u8]], ys: &mut [&mut [u8]]) -> Vec<u8> {
         assert_eq!(share.s0s.len(), 1);
 
-        let mut ys: Vec<Vec<u8>> = vec![];
         let mut pi = share.cs.clone();
         let mut hash_prime_buf = vec![0; self.lambda * 4];
-        for x in xs {
+        for (xi, x) in xs.iter().enumerate() {
             let mut node = (share.s0s[0].clone(), b);
             let mut node_buf = node.clone();
             for i in 0..x.view_bits::<Msb0>().len() {
@@ -117,16 +116,20 @@ impl VDPF {
                     node = node_buf.clone();
                 }
             }
-            hash_prime_buf[0..self.lambda].copy_from_slice(x);
+            hash_prime_buf[0..x.len()].copy_from_slice(x);
+            if x.len() < self.lambda {
+                hash_prime_buf[x.len()..self.lambda].fill(0);
+            }
             self.hash.gen(&mut hash_prime_buf, &node.0);
             node.1 = node.0.view_bits::<Lsb0>()[0];
             // Since we use xor as plus, -a == a in the group
-            ys.push(correct(BGroup::from(node.0), share.ocw.as_ref(), node.1).into());
+            ys[xi].copy_from_slice(&node.0);
+            correct_bytes(&mut ys[xi], &share.ocw, node.1);
             correct_bytes(&mut hash_prime_buf, &share.cs, node.1);
             xor_bytes(&mut hash_prime_buf, &pi);
             xor_bytes(&mut pi, &mut hash_prime_buf)
         }
-        (ys, pi.into())
+        pi.into()
     }
 
     /// `Verify` in the paper
@@ -189,18 +192,6 @@ fn correct_bytes(a: &mut [u8], b: &[u8], t: bool) {
 fn correct_bit(a: bool, b: bool, t: bool) -> bool {
     if t {
         xor_bool(a, b)
-    } else {
-        a
-    }
-}
-
-/// `correct` in the paper
-fn correct<Lhs, Rhs>(a: Lhs, b: Rhs, t: bool) -> Lhs
-where
-    Lhs: Add<Rhs, Output = Lhs>,
-{
-    if t {
-        a + b
     } else {
         a
     }
@@ -276,7 +267,7 @@ mod tests {
             Box::new(ChaChaBSampler::new(seed)),
             1000,
         );
-        let gen_res = vdpf.gen(f.clone());
+        let gen_res = vdpf.gen(&f);
         assert!(gen_res.is_ok(), "VDPF gen failed");
         let mut share = gen_res.unwrap();
 
@@ -287,13 +278,18 @@ mod tests {
             hex!("a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").as_ref(),
             hex!("4d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
         ];
-        share.s0s = vec![s01];
-        let (y1s, pi1) = vdpf.eval(true, &share, xs);
+        let mut ys0 = vec![vec![0; 16]; 3];
+        let mut ys0_ref = ys0.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
+        let mut ys1 = vec![vec![0; 16]; 3];
+        let mut ys1_ref = ys1.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
         share.s0s = vec![s00];
-        let (y0s, pi0) = vdpf.eval(false, &share, xs);
+        let pi0 = vdpf.eval(false, &share, xs, &mut ys0_ref);
+        share.s0s = vec![s01];
+        let pi1 = vdpf.eval(true, &share, xs, &mut ys1_ref);
         assert_eq!(vdpf.verify(&[&pi0, &pi1]), true);
-        for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
-            let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
+        for ((x, y0), y1) in xs.iter().zip(ys0.iter()).zip(ys1.iter()) {
+            let mut y = y0.to_owned();
+            xor_bytes(&mut y, y1);
             if x == &f.a {
                 assert_eq!(y, f.b);
             } else {

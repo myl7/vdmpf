@@ -11,8 +11,8 @@ use num_bigint::{BigUint, ToBigUint};
 use num_integer::Integer;
 use statrs::distribution::{ContinuousCDF, Normal};
 
-use crate::dpf::{BSampler, Hash, PRG, HashPrime, PointFn, Share, VDPF};
-use crate::group::BGroup;
+use crate::dpf::{BSampler, Hash, HashPrime, PointFn, Share, PRG, VDPF};
+use crate::group::xor_bytes;
 
 /// `VerDMPF` in the paper.
 /// $\mathcal(k)$ is fixed to 3 since it affects the form of `ch_compact`.
@@ -89,8 +89,7 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        // let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
-        let n_prime = 16;
+        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
 
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
@@ -133,7 +132,7 @@ impl VDMPF {
                 None => (vec![0; n_prime], vec![0; self.lambda]),
             };
             let f = PointFn { a, b };
-            let share = self.vdpf.gen(f)?;
+            let share = self.vdpf.gen(&f)?;
             mshare.ks.push(share);
         }
         Ok(mshare)
@@ -161,8 +160,7 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        // let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
-        let n_prime = 16;
+        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
 
         let mut inputs = vec![vec![]; m];
         let mut dedup = HashMap::new();
@@ -188,15 +186,16 @@ impl VDMPF {
                 }
             });
         });
-        let mut outputs = vec![BGroup::from(vec![0; self.lambda]); xs.len()];
-        let mut pi = BGroup::from(vec![0; self.lambda * 4]);
+        let mut outputs = vec![vec![0; self.lambda]; xs.len()];
+        let mut pi = vec![0; self.lambda * 4];
+        let mut ys = vec![vec![0; 16]; n_prime];
         inputs.iter().enumerate().for_each(|(i, input)| {
             let js = input.iter().map(|(j, _)| j.as_ref()).collect::<Vec<_>>();
-            let (ys, pii) = self.vdpf.eval(b_party, &mshare.ks[i], &js);
-            ys.into_iter().zip(input.iter()).for_each(|(y, (_, eta))| {
-                outputs[*eta] += y.as_ref();
-                let pi_tmp: Vec<u8> = (pi.clone() + pii.as_ref()).into();
-                pi += pi_tmp.as_ref();
+            let mut ys_ref = ys.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
+            let pii = self.vdpf.eval(b_party, &mshare.ks[i], &js, &mut ys_ref);
+            ys.iter().zip(input.iter()).for_each(|(y, (_, eta))| {
+                xor_bytes(&mut outputs[*eta], &y);
+                xor_bytes(&mut pi, &pii);
             });
         });
         let output_vals: Vec<Vec<u8>> = outputs.into_iter().map(|output| output.into()).collect();
@@ -368,7 +367,8 @@ mod tests {
         let (y1s, pi1) = vdmpf.eval(true, &mshare1, xs, fs.len());
         assert_eq!(vdmpf.verify(&[&pi0, &pi1]), true);
         for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
-            let y: Vec<u8> = (BGroup::from(y0.to_owned()) + y1.as_ref()).into();
+            let mut y = y0.to_owned();
+            xor_bytes(&mut y, &y1);
             if x == &fs[0].a {
                 assert_eq!(y, fs[0].b);
             } else if x == &fs[1].a {

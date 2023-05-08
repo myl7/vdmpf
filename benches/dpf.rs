@@ -14,14 +14,14 @@ fn gen(f: PointFn) -> [Share; 2] {
         Box::new(ChaChaBSampler::default()),
         1000,
     );
-    let mut mshare0 = vdpf.gen(f).unwrap();
+    let mut mshare0 = vdpf.gen(&f).unwrap();
     let mut mshare1 = mshare0.clone();
     mshare0.s0s = vec![mshare0.s0s[0].clone()];
     mshare1.s0s = vec![mshare1.s0s[1].clone()];
     [mshare0, mshare1]
 }
 
-fn eval_xs100(share: Share, xs: Vec<Vec<u8>>) -> (Vec<Vec<u8>>, Vec<u8>) {
+fn eval_xs100(share: Share, xs: Vec<Vec<u8>>, ys: &mut [&mut [u8]]) -> Vec<u8> {
     let vdpf = VDPF::new(
         16,
         Box::new(Aes128PRG::default()),
@@ -31,8 +31,9 @@ fn eval_xs100(share: Share, xs: Vec<Vec<u8>>) -> (Vec<Vec<u8>>, Vec<u8>) {
         1000,
     );
     let xs_ref = xs.iter().map(|x| x.as_ref()).collect::<Vec<_>>();
-    let (y0s, pi0) = vdpf.eval(false, &share, &xs_ref);
-    (y0s, pi0)
+    let pi0 = vdpf.eval(false, &share, &xs_ref, ys);
+    assert_eq!(ys.len(), xs.len());
+    pi0
 }
 
 fn criterion_benches(c: &mut Criterion) {
@@ -54,8 +55,16 @@ fn criterion_benches(c: &mut Criterion) {
     }
 
     let [share0, _] = gen(f);
+    let mut ys = vec![vec![0; 16]; xs.len()];
+    let mut ys_ref = ys.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
     c.bench_function("eval_xs100", |b| {
-        b.iter(|| eval_xs100(black_box(share0.clone()), black_box(xs.clone())))
+        b.iter(|| {
+            eval_xs100(
+                black_box(share0.clone()),
+                black_box(xs.clone()),
+                black_box(&mut ys_ref),
+            )
+        })
     });
 }
 
