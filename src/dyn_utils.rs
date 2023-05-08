@@ -6,7 +6,7 @@ use aes::{Aes128, Aes256};
 use hex_literal::hex;
 use rand::prelude::*;
 use rand_chacha::ChaChaRng;
-// use rand_seeder::Seeder;
+use rand_seeder::Seeder;
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 
@@ -23,12 +23,7 @@ impl Permu for Aes256PRP {
 
     fn permu(&self, seed: &[u8], x: &mut [u8]) {
         assert_eq!(x.len(), 16);
-        assert_eq!(seed.len(), 16);
-        let mut seed_gen = [0u8; 32];
-        seed_gen[0..16].copy_from_slice(seed);
-        seed_gen[16..32].copy_from_slice(seed);
-        let mut rng = ChaChaRng::from_seed(seed_gen);
-        // let mut rng: ChaChaRng = Seeder::from(seed).make_rng();
+        let mut rng: ChaChaRng = Seeder::from(seed).make_rng();
         let key = GenericArray::from(rng.gen::<[u8; 32]>());
         let mut block = GenericArray::from_mut_slice(&mut x[0..16]);
         let cipher = Aes256::new(&key);
@@ -81,7 +76,6 @@ pub struct ChaChaPRG {}
 
 impl Gen for ChaChaPRG {
     fn gen(&self, input: &[u8], output_len: usize) -> Vec<u8> {
-        assert!(input.len() == 16);
         let mut seed = [0u8; 32];
         seed[0..16].copy_from_slice(input);
         seed[16..32].copy_from_slice(input);

@@ -17,7 +17,7 @@ dyn_utils = [
   "dep:sha3",
   "dep:rand",
   "dep:rand_chacha",
-  # "dep:rand_seeder",
+  "dep:rand_seeder",
   "dep:hex-literal",
 ]
 
@@ -29,7 +29,7 @@ num-integer = "0.1.45"
 anyhow = "1.0.70"
 sha3 = { version = "0.10.6", optional = true }
 rand = { version = "0.8.5", optional = true }
-# rand_seeder = { version = "0.2.3", optional = true }
+rand_seeder = { version = "0.2.3", optional = true }
 rand_chacha = { version = "0.3.1", optional = true }
 aes = { version = "0.8.2", optional = true }
 hex-literal = { version = "0.4.1", optional = true }

@@ -89,8 +89,7 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        let n_prime = b.bits() as usize;
-        let n_prime_byte = (b.bits() as f64 / 8f64).ceil() as usize;
+        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
 
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
@@ -125,18 +124,14 @@ impl VDMPF {
                 Some((aji, k)) => {
                     let yb = self.prp_result(fs[aji].a.as_ref(), &n, k, &mshare.seed);
                     let mut index = (yb % &b).to_bytes_be();
-                    pad_biguint(&mut index, n_prime_byte);
+                    pad_biguint(&mut index, n_prime);
                     let a = index;
                     let b = fs[aji].b.clone();
                     (a, b)
                 }
-                None => (vec![0; n_prime_byte], vec![0; self.lambda]),
+                None => (vec![0; n_prime], vec![0; self.lambda]),
             };
-            let f = PointFn {
-                a,
-                b,
-                a_leap: Some(n_prime_byte * 8 - n_prime),
-            };
+            let f = PointFn { a, b };
             let share = self.vdpf.gen(f)?;
             mshare.ks.push(share);
         }
@@ -165,8 +160,7 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        let n_prime = b.bits() as usize;
-        let n_prime_byte = (b.bits() as f64 / 8f64).ceil() as usize;
+        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
 
         let mut inputs = vec![vec![]; m];
         let mut dedup = HashMap::new();
@@ -181,7 +175,7 @@ impl VDMPF {
                 .map(|i| {
                     let yb = self.prp_result(x, &n, i, &mshare.seed);
                     let mut index = (yb % &b).to_bytes_be();
-                    pad_biguint(&mut index, n_prime_byte);
+                    pad_biguint(&mut index, n_prime);
                     index
                 })
                 .collect::<Vec<_>>();
@@ -196,12 +190,7 @@ impl VDMPF {
         let mut pi = BGroup::from(vec![0; self.lambda]);
         inputs.iter().enumerate().for_each(|(i, input)| {
             let js = input.iter().map(|(j, _)| j.as_ref()).collect::<Vec<_>>();
-            let (ys, pii) = self.vdpf.eval(
-                b_party,
-                &mshare.ks[i],
-                &js,
-                Some(n_prime_byte * 8 - n_prime),
-            );
+            let (ys, pii) = self.vdpf.eval(b_party, &mshare.ks[i], &js);
             ys.into_iter().zip(input.iter()).for_each(|(y, (_, eta))| {
                 outputs[*eta] += y.as_ref();
                 let pi_tmp: Vec<u8> = (pi.clone() + pii.as_ref()).into();
@@ -330,12 +319,10 @@ mod tests {
             PointFn {
                 a: hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4").to_vec(),
                 b: hex!("e5f67890e5f67890e5f67890e5f67890").to_vec(),
-                a_leap: None,
             },
             PointFn {
                 a: hex!("01b2c3d4a1b2c3d4a1b2c3d4a1b2c3d5").to_vec(),
                 b: hex!("e5f67890e5f67890e5f67890e5f67891").to_vec(),
-                a_leap: None,
             },
         ];
         let ch_seed = 7;
