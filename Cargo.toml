@@ -42,6 +42,11 @@ name = "dmpf"
 harness = false
 required-features = ["dyn_utils"]
 
+[[bench]]
+name = "dpf"
+harness = false
+required-features = ["dyn_utils"]
+
 # For flamegraph
-# [profile.bench]
-# debug = true
+[profile.bench]
+debug = true
