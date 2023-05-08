@@ -5,22 +5,22 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::prelude::*;
 
 use vdmpf::dmpf::{MShare, VDMPF};
-use vdmpf::dpf::{Gen, PointFn};
+use vdmpf::dpf::{PointFn};
 use vdmpf::dyn_utils::*;
 
-fn gen_t1k(fs: Vec<PointFn>, prg: Box<dyn Gen>) -> [MShare; 2] {
+fn gen_t1k(fs: Vec<PointFn>) -> [MShare; 2] {
     let vdmpf = VDMPF::new(
         80f64,
         1000,
-        Box::new(Aes256PRP::default()),
+        Box::new(Aes128PRP::default()),
         Box::new(ChaChaISampler::default()),
         Box::new(ChaChaBSampler::default()),
         1000,
         16,
-        prg,
-        Box::new(Shake256Hash::default()),
-        Box::new(Shake256Hash::default()),
-        Box::new(Shake256Hash::default()),
+        Box::new(Aes128PRG::default()),
+        Box::new(Aes128Hash::default()),
+        Box::new(Aes128Hash::default()),
+        Box::new(Aes128Hash::default()),
         Box::new(ChaChaBSampler::default()),
         1000,
     );
@@ -42,20 +42,19 @@ fn eval_xs100k(
     mshare: MShare,
     xs: Vec<Vec<u8>>,
     t: usize,
-    prg: Box<dyn Gen>,
 ) -> (Vec<Vec<u8>>, Vec<u8>) {
     let vdmpf = VDMPF::new(
         80f64,
         1000,
-        Box::new(Aes256PRP::default()),
+        Box::new(Aes128PRP::default()),
         Box::new(ChaChaISampler::default()),
         Box::new(ChaChaBSampler::default()),
         1000,
         16,
-        prg,
-        Box::new(Shake256Hash::default()),
-        Box::new(Shake256Hash::default()),
-        Box::new(Shake256Hash::default()),
+        Box::new(Aes128PRG::default()),
+        Box::new(Aes128Hash::default()),
+        Box::new(Aes128Hash::default()),
+        Box::new(Aes128Hash::default()),
         Box::new(ChaChaBSampler::default()),
         1000,
     );
@@ -78,19 +77,10 @@ fn criterion_benches(c: &mut Criterion) {
         fs.push(PointFn { a, b });
     }
 
-    c.bench_function("aes128prg_gen_t1k", |b| {
+    c.bench_function("gen_t1k", |b| {
         b.iter(|| {
             gen_t1k(
                 black_box(fs.clone()),
-                black_box(Box::new(Aes128PRG::default())),
-            )
-        })
-    });
-    c.bench_function("chachaprg_gen_t1k", |b| {
-        b.iter(|| {
-            gen_t1k(
-                black_box(fs.clone()),
-                black_box(Box::new(ChaChaPRG::default())),
             )
         })
     });
@@ -104,26 +94,13 @@ fn criterion_benches(c: &mut Criterion) {
         xs.push(a);
     }
 
-    let [mshare0_aes128, _] = gen_t1k(fs.clone(), Box::new(Aes128PRG::default()));
-    c.bench_function("aes128prg_eval_xs100k", |b| {
+    let [mshare0, _] = gen_t1k(fs.clone());
+    c.bench_function("eval_xs100k", |b| {
         b.iter(|| {
             eval_xs100k(
-                black_box(mshare0_aes128.clone()),
+                black_box(mshare0.clone()),
                 black_box(xs.clone()),
                 black_box(fs.len()),
-                black_box(Box::new(Aes128PRG::default())),
-            )
-        })
-    });
-
-    let [mshare0_chacha, _] = gen_t1k(fs.clone(), Box::new(ChaChaPRG::default()));
-    c.bench_function("chachaprg_eval_xs100k", |b| {
-        b.iter(|| {
-            eval_xs100k(
-                black_box(mshare0_chacha.clone()),
-                black_box(xs.clone()),
-                black_box(fs.len()),
-                black_box(Box::new(ChaChaPRG::default())),
             )
         })
     });

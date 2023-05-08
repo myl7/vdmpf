@@ -1,6 +1,6 @@
 [package]
 name = "vdmpf"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["myl7 <myl@myl.moe>"]
 edition = "2021"
 description = "Verifiable distributed multi-point function (DMPF) implementation"
@@ -14,7 +14,6 @@ categories = ["cryptography"]
 [features]
 dyn_utils = [
   "dep:aes",
-  "dep:sha3",
   "dep:rand",
   "dep:rand_chacha",
   "dep:rand_seeder",
@@ -27,7 +26,6 @@ statrs = "0.16.0"
 num-bigint = "0.4.3"
 num-integer = "0.1.45"
 anyhow = "1.0.70"
-sha3 = { version = "0.10.6", optional = true }
 rand = { version = "0.8.5", optional = true }
 rand_seeder = { version = "0.2.3", optional = true }
 rand_chacha = { version = "0.3.1", optional = true }

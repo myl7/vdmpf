@@ -1,6 +1,6 @@
 # vdmpf
 
-Progress: DPF & DMPF with tests OK but await interface justification
+Progress: Refactoring DPF & DMPF to reduce alloc
 
 Verifiable distributed multi-point function (DMPF) implementation
 

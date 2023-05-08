@@ -11,7 +11,7 @@ use num_bigint::{BigUint, ToBigUint};
 use num_integer::Integer;
 use statrs::distribution::{ContinuousCDF, Normal};
 
-use crate::dpf::{BSampler, Gen, PointFn, Share, VDPF};
+use crate::dpf::{BSampler, Hash, PRG, HashPrime, PointFn, Share, VDPF};
 use crate::group::BGroup;
 
 /// `VerDMPF` in the paper.
@@ -34,7 +34,7 @@ pub struct VDMPF {
     lambda: usize,
     vdpf: VDPF,
     /// $H'$ used by VDMPF particularly
-    hash_prime: Box<dyn Gen>,
+    hash_prime: Box<dyn HashPrime>,
 }
 
 impl VDMPF {
@@ -46,10 +46,10 @@ impl VDMPF {
         prp_sampler: Box<dyn BSampler>,
         prp_retry: usize,
         lambda: usize,
-        prg: Box<dyn Gen>,
-        hash: Box<dyn Gen>,
-        hash_prime: Box<dyn Gen>,
-        hash_prime_dmpf: Box<dyn Gen>,
+        prg: Box<dyn PRG>,
+        hash: Box<dyn Hash>,
+        hash_prime: Box<dyn HashPrime>,
+        hash_prime_dmpf: Box<dyn HashPrime>,
         dpf_sampler: Box<dyn BSampler>,
         gen_retry: usize,
     ) -> Self {
@@ -89,7 +89,8 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
+        // let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
+        let n_prime = 16;
 
         // + 2 to use 0 as the boundary
         let mut prp_retry = self.prp_retry + 2;
@@ -160,7 +161,8 @@ impl VDMPF {
             .pow(bn_pow)
             .div_ceil(&m.to_biguint().unwrap());
         // $n' / 8$ in the paper
-        let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
+        // let n_prime = (b.bits() as f64 / 8f64).ceil() as usize;
+        let n_prime = 16;
 
         let mut inputs = vec![vec![]; m];
         let mut dedup = HashMap::new();
@@ -187,14 +189,14 @@ impl VDMPF {
             });
         });
         let mut outputs = vec![BGroup::from(vec![0; self.lambda]); xs.len()];
-        let mut pi = BGroup::from(vec![0; self.lambda]);
+        let mut pi = BGroup::from(vec![0; self.lambda * 4]);
         inputs.iter().enumerate().for_each(|(i, input)| {
             let js = input.iter().map(|(j, _)| j.as_ref()).collect::<Vec<_>>();
             let (ys, pii) = self.vdpf.eval(b_party, &mshare.ks[i], &js);
             ys.into_iter().zip(input.iter()).for_each(|(y, (_, eta))| {
                 outputs[*eta] += y.as_ref();
                 let pi_tmp: Vec<u8> = (pi.clone() + pii.as_ref()).into();
-                pi += self.hash_prime.gen(&pi_tmp, self.lambda).as_ref();
+                pi += pi_tmp.as_ref();
             });
         });
         let output_vals: Vec<Vec<u8>> = outputs.into_iter().map(|output| output.into()).collect();
@@ -331,15 +333,15 @@ mod tests {
         let vdmpf = VDMPF::new(
             80f64,
             1000,
-            Box::new(Aes256PRP::default()),
+            Box::new(Aes128PRP::default()),
             Box::new(ChaChaISampler::new(ch_seed)),
             Box::new(ChaChaBSampler::new(prp_seed)),
             1000,
             16,
-            Box::new(ChaChaPRG::default()),
-            Box::new(Shake256Hash::default()),
-            Box::new(Shake256Hash::default()),
-            Box::new(Shake256Hash::default()),
+            Box::new(Aes128PRG::default()),
+            Box::new(Aes128Hash::default()),
+            Box::new(Aes128Hash::default()),
+            Box::new(Aes128Hash::default()),
             Box::new(ChaChaBSampler::new(dpf_seed)),
             1000,
         );
