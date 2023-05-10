@@ -99,19 +99,8 @@ impl VDMPF {
                 return Err(anyhow!("VDMPF fails"));
             }
             let seed = self.prp_sampler.sample(self.lambda);
-            let hs = (0..VDMPF::K)
-                .map(|i| {
-                    let n = n.clone();
-                    let b = b.clone();
-                    let seed = seed.clone();
-                    move |x: &[u8]| {
-                        let yb = self.prp_result(x, &n, i, &seed);
-                        usize_biguint(yb / &b)
-                    }
-                })
-                .collect::<Vec<_>>();
             let a_s = fs.iter().map(|f| f.a.as_ref()).collect::<Vec<_>>();
-            let table = match self.ch_compact(&a_s, &hs, m) {
+            let table = match self.ch_compact(&a_s, m, &seed, &n, &b) {
                 Ok(table) => table,
                 Err(_) => continue,
             };
@@ -146,8 +135,9 @@ impl VDMPF {
         b_party: bool,
         mshare: &MShare,
         xs: &[&[u8]],
+        ys: &mut [&mut [u8]],
         t: usize,
-    ) -> (Vec<Vec<u8>>, Vec<u8>) {
+    ) -> Vec<u8> {
         assert_eq!(mshare.ks.first().map(|k| k.s0s.len()), Some(1));
 
         let (n_pow, bn_pow) = self.prp.domains();
@@ -186,22 +176,20 @@ impl VDMPF {
                 }
             });
         });
-        let mut outputs = vec![vec![0; self.lambda]; xs.len()];
         let mut pi = vec![0; self.lambda * 4];
-        let mut ys = vec![vec![0; 16]; n_prime];
+        let mut dpf_ys = vec![vec![0; 16]; n_prime];
         inputs.iter().enumerate().for_each(|(i, input)| {
             let js = input.iter().map(|(j, _)| j.as_ref()).collect::<Vec<_>>();
-            let mut ys_ref = ys.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
-            let mut pii = self.vdpf.eval(b_party, &mshare.ks[i], &js, &mut ys_ref);
-            ys.iter().zip(input.iter()).for_each(|(y, (_, eta))| {
-                xor_bytes(&mut outputs[*eta], &y);
+            let mut dpf_ys_ref = dpf_ys.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
+            let mut pii = self.vdpf.eval(b_party, &mshare.ks[i], &js, &mut dpf_ys_ref);
+            dpf_ys.iter().zip(input.iter()).for_each(|(y, (_, eta))| {
+                xor_bytes(&mut ys[*eta], &y);
             });
             xor_bytes(&mut pii, &pi);
             self.hash_prime.gen(&mut pii);
             xor_bytes(&mut pi, &pii);
         });
-        let output_vals: Vec<Vec<u8>> = outputs.into_iter().map(|output| output.into()).collect();
-        (output_vals, pi.into())
+        pi
     }
 
     /// `Verify` in the paper
@@ -227,8 +215,10 @@ impl VDMPF {
     fn ch_compact(
         &self,
         a_s: &[&[u8]],
-        hs: &[impl Fn(&[u8]) -> usize],
         m: usize,
+        seed: &[u8],
+        n: &BigUint,
+        b: &BigUint,
     ) -> Result<Vec<Option<(usize, usize)>>, ()> {
         // `Table` in the paper
         let mut table = vec![None; m];
@@ -243,7 +233,10 @@ impl VDMPF {
                 }
                 let k = self.ch_sampler.sample(VDMPF::K);
                 pending.iter_mut().for_each(|(_, pk)| *pk = k);
-                let i = hs[k](a_s[pi]);
+
+                let yb = self.prp_result(a_s[pi], n, k, seed);
+                let i = usize_biguint(yb / b);
+
                 mem::swap(&mut table[i], &mut pending);
             }
         }
@@ -365,10 +358,14 @@ mod tests {
             hex!("0d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1a").as_ref(),
             hex!("0d3c2b1a4d3c2b1a4d3c2b1a4d3c2b1b").as_ref(),
         ];
-        let (y0s, pi0) = vdmpf.eval(false, &mshare0, xs, fs.len());
-        let (y1s, pi1) = vdmpf.eval(true, &mshare1, xs, fs.len());
+        let mut ys0 = vec![vec![0; 16]; xs.len()];
+        let mut ys0_ref = ys0.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
+        let mut ys1 = vec![vec![0; 16]; xs.len()];
+        let mut ys1_ref = ys1.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
+        let pi0 = vdmpf.eval(false, &mshare0, xs, &mut ys0_ref, fs.len());
+        let pi1 = vdmpf.eval(true, &mshare1, xs, &mut ys1_ref, fs.len());
         assert_eq!(vdmpf.verify(&[&pi0, &pi1]), true);
-        for ((x, y0), y1) in xs.iter().zip(y0s.iter()).zip(y1s.iter()) {
+        for ((x, y0), y1) in xs.iter().zip(ys0.iter()).zip(ys1.iter()) {
             let mut y = y0.to_owned();
             xor_bytes(&mut y, &y1);
             if x == &fs[0].a {
