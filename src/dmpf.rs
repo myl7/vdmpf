@@ -192,11 +192,13 @@ impl VDMPF {
         inputs.iter().enumerate().for_each(|(i, input)| {
             let js = input.iter().map(|(j, _)| j.as_ref()).collect::<Vec<_>>();
             let mut ys_ref = ys.iter_mut().map(|y| y.as_mut()).collect::<Vec<_>>();
-            let pii = self.vdpf.eval(b_party, &mshare.ks[i], &js, &mut ys_ref);
+            let mut pii = self.vdpf.eval(b_party, &mshare.ks[i], &js, &mut ys_ref);
             ys.iter().zip(input.iter()).for_each(|(y, (_, eta))| {
                 xor_bytes(&mut outputs[*eta], &y);
-                xor_bytes(&mut pi, &pii);
             });
+            xor_bytes(&mut pii, &pi);
+            self.hash_prime.gen(&mut pii);
+            xor_bytes(&mut pi, &pii);
         });
         let output_vals: Vec<Vec<u8>> = outputs.into_iter().map(|output| output.into()).collect();
         (output_vals, pi.into())

@@ -127,6 +127,7 @@ impl VDPF {
             correct_bytes(&mut ys[xi], &share.ocw, node.1);
             correct_bytes(&mut hash_prime_buf, &share.cs, node.1);
             xor_bytes(&mut hash_prime_buf, &pi);
+            self.hash_prime.gen(&mut hash_prime_buf);
             xor_bytes(&mut pi, &mut hash_prime_buf)
         }
         pi.into()

@@ -117,7 +117,22 @@ impl Hash for Aes128Hash {
 
 impl HashPrime for Aes128Hash {
     fn gen(&self, x: &mut [u8]) {
-        todo!()
+        assert_eq!(x.len(), 64);
+        let mut buf = [0; 16];
+        let mut block = GenericArray::from_mut_slice(&mut buf);
+
+        for i in 0..4 {
+            let block_in = GenericArray::from_slice(&x[i * 16..(i + 1) * 16]);
+            AES128_CIPHERS[i].encrypt_block_b2b(block_in, &mut block);
+            for j in 0..16 {
+                x[i * 16 + j] ^= block[j]
+            }
+        }
+
+        for i in 0..32 {
+            x[i] ^= x[i + 32];
+            x[i + 32] = 0;
+        }
     }
 }
 
