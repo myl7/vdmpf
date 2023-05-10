@@ -5,10 +5,10 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::prelude::*;
 
 use vdmpf::dmpf::{MShare, VDMPF};
-use vdmpf::dpf::{PointFn};
+use vdmpf::dpf::PointFn;
 use vdmpf::dyn_utils::*;
 
-fn gen_t1k(fs: Vec<PointFn>) -> [MShare; 2] {
+fn gen_t1k(fs: &[&PointFn]) -> [MShare; 2] {
     let vdmpf = VDMPF::new(
         80f64,
         1000,
@@ -24,8 +24,7 @@ fn gen_t1k(fs: Vec<PointFn>) -> [MShare; 2] {
         Box::new(ChaChaBSampler::default()),
         1000,
     );
-    let fs_ref = fs.iter().collect::<Vec<_>>();
-    let mut mshare0 = vdmpf.gen(&fs_ref).unwrap();
+    let mut mshare0 = vdmpf.gen(fs).unwrap();
     let mut mshare1 = mshare0.clone();
     mshare0
         .ks
@@ -38,11 +37,7 @@ fn gen_t1k(fs: Vec<PointFn>) -> [MShare; 2] {
     [mshare0, mshare1]
 }
 
-fn eval_xs100k(
-    mshare: MShare,
-    xs: Vec<Vec<u8>>,
-    t: usize,
-) -> (Vec<Vec<u8>>, Vec<u8>) {
+fn eval_xs100k(mshare: &MShare, xs: &[&[u8]], t: usize) -> (Vec<Vec<u8>>, Vec<u8>) {
     let vdmpf = VDMPF::new(
         80f64,
         1000,
@@ -58,8 +53,7 @@ fn eval_xs100k(
         Box::new(ChaChaBSampler::default()),
         1000,
     );
-    let xs_ref = xs.iter().map(|x| x.as_ref()).collect::<Vec<_>>();
-    let (y0s, pi0) = vdmpf.eval(false, &mshare, &xs_ref, t);
+    let (y0s, pi0) = vdmpf.eval(false, mshare, xs, t);
     (y0s, pi0)
 }
 
@@ -76,14 +70,9 @@ fn criterion_benches(c: &mut Criterion) {
         f_rng.fill_bytes(&mut b);
         fs.push(PointFn { a, b });
     }
+    let fs_ref = fs.iter().collect::<Vec<_>>();
 
-    c.bench_function("gen_t1k", |b| {
-        b.iter(|| {
-            gen_t1k(
-                black_box(fs.clone()),
-            )
-        })
-    });
+    c.bench_function("gen_t1k", |b| b.iter(|| gen_t1k(black_box(&fs_ref))));
 
     let xs_n = 100_000;
     let mut xs = fs.iter().map(|f| f.a.clone()).collect::<Vec<_>>();
@@ -94,15 +83,10 @@ fn criterion_benches(c: &mut Criterion) {
         xs.push(a);
     }
 
-    let [mshare0, _] = gen_t1k(fs.clone());
+    let [mshare0, _] = gen_t1k(&fs_ref);
+    let xs_ref = xs.iter().map(|x| x.as_ref()).collect::<Vec<_>>();
     c.bench_function("eval_xs100k", |b| {
-        b.iter(|| {
-            eval_xs100k(
-                black_box(mshare0.clone()),
-                black_box(xs.clone()),
-                black_box(fs.len()),
-            )
-        })
+        b.iter(|| eval_xs100k(black_box(&mshare0), black_box(&xs_ref), black_box(fs.len())))
     });
 }
 
