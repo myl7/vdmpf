@@ -9,7 +9,6 @@ use lazy_static::lazy_static;
 use rand::prelude::*;
 use rand_chacha::ChaChaRng;
 
-// use crate::dmpf::{ISampler, Permu};
 use crate::dmpf::{ISampler, Permu};
 use crate::dpf::{BSampler, Hash, HashPrime, PRG};
 
@@ -143,29 +142,25 @@ impl PRG for Aes128PRG {
     fn gen(&self, x: &mut [u8], x2: &mut [u8]) -> [bool; 2] {
         assert_eq!(x.len(), 16);
         assert!(x.len() == x2.len());
+        // assert!(x[0] >> 6 == 0);
 
         x2.copy_from_slice(x);
         let block = GenericArray::from_mut_slice(x2);
-        AES128_CIPHERS[0].encrypt_block(block);
+        AES128_CIPHERS[1].encrypt_block(block);
         for i in 0..16 {
             x2[i] ^= x[i];
         }
         let ts = [x2[0].view_bits::<Msb0>()[0], x2[0].view_bits::<Msb0>()[1]];
-
-        x2.copy_from_slice(x);
-        let block = GenericArray::from_mut_slice(x2);
-        AES128_CIPHERS[2].encrypt_block(block);
-        for i in 0..16 {
-            x2[i] ^= x[i];
-        }
+        x2[0] &= 0b0011_1111;
 
         let mut buf = [0; 16];
         buf.copy_from_slice(x);
         let block = GenericArray::from_mut_slice(&mut buf);
-        AES128_CIPHERS[1].encrypt_block(block);
+        AES128_CIPHERS[0].encrypt_block(block);
         for i in 0..16 {
             x[i] ^= buf[i];
         }
+        x[0] &= 0b0011_1111;
 
         ts
     }
